@@ -161,6 +161,7 @@ tr.me td:first-child{box-shadow:inset 3px 0 0 var(--grass)}
 .prows{position:absolute;inset:24px;display:flex;flex-direction:column;justify-content:space-between}
 .prowline{display:flex;justify-content:space-evenly;align-items:center}
 .token{display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;width:66px;transition:transform .15s var(--ease)}
+.subtag{font-size:8.5px;line-height:1.15;background:rgba(217,164,65,.18);color:var(--amber);border:1px solid rgba(217,164,65,.4);border-radius:4px;padding:1px 4px;margin-top:1px;white-space:nowrap;font-weight:600}
 .token:hover{transform:translateY(-3px)}
 .token .disc{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;
   font-family:var(--mono);font-weight:700;font-size:13px;color:#052012;
@@ -348,7 +349,7 @@ input[type=text]:focus{outline:none;border-color:var(--grass);box-shadow:0 0 0 3
     <div class="club-chip" id="tbCoachChip" style="display:none"><span style="font-size:16px">🧑‍💼</span>
       <div><div class="name" id="tbCoach" style="font-size:12px"></div><div class="eyebrow">Treinador</div></div></div>
     <div class="spacer"></div>
-    <div class="stat-chip"><span class="k">Reputação</span><span class="v" id="tbRep"></span></div>
+    <div class="stat-chip"><span class="k" id="tbRepK">Reputação</span><span class="v" id="tbRep"></span></div>
     <div class="stat-chip"><span class="k">Temporada</span><span class="v" id="tbSeason"></span></div>
     <div class="stat-chip"><span class="k">Rodada</span><span class="v" id="tbRound"></span></div>
     <div class="stat-chip"><span class="k">Caixa</span><span class="v amber" id="tbMoney"></span></div>
@@ -633,6 +634,60 @@ function xiPower(players){
   return {atk:0.52*at+0.30*mf+0.18*all, def:0.50*df+0.24*gk+0.16*mf+0.10*all, all};
 }
 function playerAvailable(p){return !((p.susp||0)>0||(p.inj||0)>0);}
+function effectiveLineup(team,L){
+  // Aplica indisponibilidade SÓ para esta partida, sem alterar a escalação pretendida (G.lineup).
+  // Titular indisponível cede o lugar ao melhor reserva disponível; reserva indisponível dá lugar a outro reserva.
+  const byId=id=>team.squad.find(p=>p.id===id);
+  const used=new Set();
+  const availReserves=()=>team.squad
+    .filter(p=>playerAvailable(p)&&!used.has(p.id))
+    .sort((a,b)=>b.ovr-a.ovr);
+  // titulares: mantém quem está apto; para os inaptos, busca reserva apto (mesma posição de preferência)
+  const starters=[];
+  (L.starters||[]).forEach(id=>{
+    const p=byId(id);if(!p){return;}
+    if(playerAvailable(p)){used.add(p.id);starters.push(p.id);return;}
+    const benchFirst=(L.bench||[]).map(byId).filter(x=>x&&playerAvailable(x)&&!used.has(x.id));
+    const cand=benchFirst.find(x=>x.grupo===p.grupo)
+      ||availReserves().find(x=>x.grupo===p.grupo)
+      ||benchFirst[0]||availReserves()[0];
+    if(cand){used.add(cand.id);starters.push(cand.id);}       // entra no lugar do inapto
+    else{used.add(p.id);starters.push(p.id);}                 // sem reserva apto: mantém (time desfalcado)
+  });
+  // banco: mantém reservas aptos; substitui inaptos por outros reservas aptos
+  const bench=[];
+  (L.bench||[]).forEach(id=>{
+    const p=byId(id);if(!p||used.has(p.id))return;
+    if(playerAvailable(p)){used.add(p.id);bench.push(p.id);return;}
+    const rep=availReserves()[0];
+    if(rep){used.add(rep.id);bench.push(rep.id);}
+  });
+  // completa o banco se sobrou vaga
+  while(bench.length<8){const rep=availReserves()[0];if(!rep)break;used.add(rep.id);bench.push(rep.id);}
+  return {formation:L.formation,starters,bench};
+}
+function repairLineup(team){
+  // Conserta a escalação após mudanças de elenco (compra/venda) SEM reshuffle:
+  // remove ids que saíram e preenche vagas, preservando os lugares de quem ficou (inclui lesionados).
+  const ids=new Set(team.squad.map(p=>p.id));
+  let L=G.lineup||{formation:'4-3-3',starters:[],bench:[]};
+  let starters=(L.starters||[]).filter(id=>ids.has(id));
+  let bench=(L.bench||[]).filter(id=>ids.has(id)&&!starters.includes(id));
+  const need=FORMATIONS[L.formation]||FORMATIONS['4-3-3'];
+  const inLine=new Set([...starters,...bench]);
+  const pool=team.squad.filter(p=>!inLine.has(p.id)).sort((a,b)=>(playerAvailable(b)-playerAvailable(a))||b.ovr-a.ovr);
+  // completa titulares por necessidade de posição
+  const cnt={GOL:0,DEF:0,MEI:0,ATA:0};starters.forEach(id=>{const p=team.squad.find(x=>x.id===id);if(p)cnt[p.grupo]++;});
+  const target={GOL:1,DEF:need.DEF,MEI:need.MEI,ATA:need.ATA};
+  while(starters.length<11){
+    let picked=null;
+    for(const g of ['GOL','DEF','MEI','ATA']){if(cnt[g]<target[g]){const i=pool.findIndex(p=>p.grupo===g);if(i>=0){picked=pool.splice(i,1)[0];cnt[g]++;break;}}}
+    if(!picked){picked=pool.shift();if(!picked)break;if(cnt[picked.grupo]!=null)cnt[picked.grupo]++;}
+    starters.push(picked.id);
+  }
+  while(bench.length<8){const p=pool.shift();if(!p)break;bench.push(p.id);}
+  G.lineup={formation:L.formation,starters,bench};
+}
 function autoLineup(team,formation){
   const need=FORMATIONS[formation];
   const pool=(list)=>{const av=list.filter(playerAvailable);return av.length?av:list;};   // fallback: nunca trava
@@ -664,7 +719,7 @@ function startGame(teamId){
     manager:{name:coach,reputation:clamp(my.prestige-8,22,82)},
     season:1,round:0,leagues:null,offers:[],history:[],finished:false,viewDiv:my.div,
     lineup:autoLineup(my,"4-3-3"),lastPos:null,lastPrize:0,lastChamp:false,champions:[],
-    cup:null,leaguePodium:[],lastLeagueEarn:0,transferOffers:[],lastWages:0,legends:[],morale:60,lastTV:0,lastGate:0,careerLog:[],seasonGate:0,seasonReview:null};
+    cup:null,leaguePodium:[],lastLeagueEarn:0,transferOffers:[],lastWages:0,legends:[],morale:60,lastTV:0,lastGate:0,careerLog:[],seasonGate:0,seasonReview:null,buyOffers:[],lastEmployedDiv:null};
   G.didim=budgets[teamId];
   logCareer('job',`${coach} assume o ${my.nome} (${DIV_NAMES[my.div]}) — início da carreira`);
   buildLeagues();buildCup();
@@ -731,7 +786,10 @@ function refreshTop(){
   document.getElementById('tbSeason').textContent=G.season;
   const flen=G.leagues?G.leagues[0].fixtures.length:22;
   document.getElementById('tbRound').textContent=Math.min(G.round+1,flen)+"/"+flen;
-  document.getElementById('tbRep').textContent=Math.round(G.manager.reputation);
+  const rep=Math.round(G.manager.reputation);const repEl=document.getElementById('tbRep'),repK=document.getElementById('tbRepK');
+  repEl.textContent=rep;
+  if(G.employed&&rep<=WARN_REP){repEl.style.color='var(--danger)';if(repK)repK.innerHTML='Reputação <span style="color:var(--danger)">⚠ demissão</span>';}
+  else{repEl.style.color='';if(repK)repK.textContent='Reputação';}
   updateOfferBadge();updateCupBadge();
   const md=document.getElementById('navMktDot');if(md)md.style.display=(G.employed&&G.transferOffers&&G.transferOffers.length)?'inline-block':'none';
 }
@@ -884,36 +942,58 @@ let ESC_SEL=null;
 function pById(id){return G.teams[G.myId].squad.find(p=>p.id===id);}
 function renderEscala(){
   const my=G.teams[G.myId],L=G.lineup;
-  const starters=L.starters.map(pById),bench=L.bench.map(pById);
-  const sset=new Set(L.starters),bset=new Set(L.bench);
-  const fora=my.squad.filter(p=>!sset.has(p.id)&&!bset.has(p.id));
-  const lineFor=g=>starters.filter(p=>p.grupo===g);
-  const pitchRow=arr=>`<div class="prowline">${arr.map(tokenHTML).join('')}</div>`;
+  if(L.starters.length!==11)repairLineup(my);
+  const eff=effectiveLineup(my,L);                       // quem realmente joga nesta partida
+  const effStarters=eff.starters.map(pById).filter(Boolean);
+  const effBench=eff.bench.map(pById).filter(Boolean);
+  // mapeia quem entrou no lugar de qual titular indisponível (posicionalmente alinhado)
+  const subFor={};
+  L.starters.forEach((id,i)=>{const intended=pById(id);
+    if(intended&&!playerAvailable(intended)){const inId=eff.starters[i];if(inId&&inId!==id){const inP=pById(inId);if(inP)subFor[inId]=intended;}}});
+  const effSet=new Set([...eff.starters,...eff.bench]);
+  const unavail=my.squad.filter(p=>!playerAvailable(p));                       // lesionados/suspensos
+  const fora=my.squad.filter(p=>playerAvailable(p)&&!effSet.has(p.id));        // aptos fora da relação
+  const lineFor=g=>effStarters.filter(p=>p.grupo===g);
+  const pitchRow=arr=>`<div class="prowline">${arr.map(p=>tokenHTML(p,subFor[p.id])).join('')}</div>`;
   const pitch=`<div class="pitch"><div class="prows">
      ${pitchRow(lineFor("ATA"))}${pitchRow(lineFor("MEI"))}${pitchRow(lineFor("DEF"))}${pitchRow(lineFor("GOL"))}</div></div>`;
-  const power=xiPower(starters);
+  const power=xiPower(effStarters);
   const options=Object.keys(FORMATIONS).map(f=>`<option value="${f}" ${f===L.formation?'selected':''}>${f} · ${FORMATION_STYLE[f]||''}</option>`).join('');
-  const benchRows=bench.map(p=>benchRowHTML(p)).join('')||'<div class="muted" style="font-size:12px">Banco vazio</div>';
+  const benchRows=effBench.map(p=>benchRowHTML(p)).join('')||'<div class="muted" style="font-size:12px">Banco vazio</div>';
   const foraRows=fora.sort((a,b)=>b.ovr-a.ovr).map(p=>benchRowHTML(p)).join('')||'<div class="muted" style="font-size:12px">—</div>';
+  const unavailRows=unavail.sort((a,b)=>b.ovr-a.ovr).map(p=>benchRowHTML(p)).join('');
+  // aviso no topo: descreve cada substituição automática
+  const subList=Object.entries(subFor).map(([inId,outP])=>{const inP=pById(+inId);return {inP,outP};}).filter(x=>x.inP);
+  const autoNote=subList.length?`<div class="card" style="border-color:var(--danger);background:rgba(226,75,75,.08);margin-bottom:10px;padding:10px 12px">
+     <div class="muted" style="font-size:12px">${subList.map(s=>{const tag=(s.outP.inj||0)>0?'🚑':'🟥';const dur=(s.outP.inj||0)>0?`${s.outP.inj} rodada(s)`:`${s.outP.susp} jogo(s)`;
+       return `${tag} <b style="font-weight:600" class="danger">${s.outP.nome}</b> (${s.outP.grupo}) fora por ${dur}. <b style="font-weight:600">${s.inP.nome}</b> entra no lugar só nesta partida.`;}).join('<br>')}
+       <br>Ao voltar, ${subList.length>1?'retomam':'retoma'} a vaga automaticamente — você não precisa mexer em nada.</div></div>`:'';
   document.getElementById('screen-escala').innerHTML=`
    <div class="row" style="justify-content:space-between;margin-bottom:12px">
      <div><div class="section-title">Escalação</div>
      <div class="muted" style="font-size:13px">Clique num titular e depois num reserva da mesma posição para trocar.</div></div>
      <div class="row"><span class="eyebrow">Formação</span><select onchange="setFormation(this.value)">${options}</select>
        <button class="btn ghost" onclick="autoEscala()">Auto</button></div></div>
+   ${autoNote}
    <div class="grid g2"><div>${pitch}
      <div class="row" style="justify-content:space-around;margin-top:10px">
        <div class="kpi" style="align-items:center"><span class="k">Ataque</span><span class="v grass">${Math.round(power.atk)}</span></div>
        <div class="kpi" style="align-items:center"><span class="k">Defesa</span><span class="v" style="color:#7aa2ff">${Math.round(power.def)}</span></div>
        <div class="kpi" style="align-items:center"><span class="k">Média XI</span><span class="v amber">${Math.round(power.all)}</span></div>
      </div></div>
-     <div><div class="card"><div class="subcol"><h4>Banco de reservas (${bench.length}/8)</h4><div class="plist">${benchRows}</div></div></div>
+     <div><div class="card"><div class="subcol"><h4>Banco de reservas (${effBench.length}/8)</h4><div class="plist">${benchRows}</div></div></div>
+       ${unavailRows?`<div class="card" style="border-color:var(--danger)"><div class="subcol"><h4 style="color:var(--danger)">🚑 Indisponíveis</h4><div class="plist">${unavailRows}</div></div></div>`:''}
        <div class="card"><div class="subcol"><h4>Fora da relação</h4><div class="plist">${foraRows}</div></div></div></div></div>`;
 }
-function tokenHTML(p){return `<div class="token ${ESC_SEL===p.id?'sel':''}" onclick="escClick(${p.id})">
-  <div class="disc">${p.ovr}</div><div class="tn">${p.nome.split(' ').slice(-1)[0]}</div><div class="to">${p.grupo}</div></div>`;}
-function benchRowHTML(p){return `<div class="prow ${ESC_SEL===p.id?'sel':''}" onclick="escClick(${p.id})">
-  <span class="pos ${p.grupo}">${p.grupo}</span><span class="pname">${p.nome}</span>
+function tokenHTML(p,subOut){
+  const sel=ESC_SEL===p.id?'sel':'';
+  const clickable=!subOut;                               // substituto automático não é editável
+  const tarja=subOut?`<div class="subtag">entra por ${subOut.nome.split(' ').slice(-1)[0]} ${(subOut.inj||0)>0?'🚑':'🟥'}</div>`:'';
+  return `<div class="token ${sel}" style="${subOut?'border-color:var(--amber)':''}" onclick="${clickable?`escClick(${p.id})`:`toast('Substituto automático por lesão/suspensão — o titular retoma a vaga ao voltar.')`}">
+  <div class="disc">${p.ovr}</div><div class="tn">${p.nome.split(' ').slice(-1)[0]}</div><div class="to">${p.grupo}</div>${tarja}</div>`;}
+function benchRowHTML(p){const un=!playerAvailable(p);const tag=(p.inj||0)>0?` <span class="danger" style="font-size:10px">🚑 ${p.inj} rod.</span>`:(p.susp||0)>0?` <span class="danger" style="font-size:10px">🟥 ${p.susp} j.</span>`:'';
+  return `<div class="prow ${ESC_SEL===p.id?'sel':''}" style="${un?'opacity:.6':''}" onclick="${un?`toast('Indisponível: volta automaticamente ao cumprir a lesão/suspensão.')`:`escClick(${p.id})`}">
+  <span class="pos ${p.grupo}">${p.grupo}</span><span class="pname">${p.nome}${tag}</span>
   <span class="sub">${p.idade}a</span><span class="ovr ${ovrClass(p.ovr)}">${p.ovr}</span></div>`;}
 function setFormation(f){G.lineup=autoLineup(G.teams[G.myId],f);ESC_SEL=null;renderEscala();}
 function autoEscala(){G.lineup=autoLineup(G.teams[G.myId],G.lineup.formation);ESC_SEL=null;renderEscala();toast("Escalação automática aplicada.");}
@@ -1038,13 +1118,17 @@ function renderCarreira(){
     </div>`;
   const offersHTML=G.offers.length?G.offers.map(o=>{
     const t=G.teams[o.clubId];const stepUp=G.employed&&o.prestige>G.teams[G.myId].prestige;
-    return `<div class="offer ${stepUp?'up':''}">
+    const fromDiv=G.employed?(G.teams[G.myId]?G.teams[G.myId].div:t.div):(G.lastEmployedDiv!=null?G.lastEmployedDiv:(G.viewDiv!=null?G.viewDiv:4));
+    const tier=offerTier(t.div,fromDiv);
+    const tierBadge=`<span style="font-family:var(--mono);font-size:10px;padding:2px 8px;border-radius:999px;background:${tier.bg};border:1px solid ${tier.bd};color:${tier.fg}">${tier.txt}</span>`;
+    return `<div class="offer ${tier.key==='up'?'up':''}">
       ${badgeHTML(t,40)}
-      <div class="oinfo"><div style="font-weight:700">${t.nome} ${stepUp?'<span class="pill" style="border-color:var(--amber);color:var(--amber)">passo acima</span>':''}</div>
+      <div class="oinfo"><div style="font-weight:700">${t.nome} ${tierBadge}</div>
         <div class="muted" style="font-size:12px">${DIV_NAMES[t.div]} · ${LEAGUE_NAME[t.liga]} · prestígio ${o.prestige} · caixa ${money(G.budgets[t.id])} didim</div></div>
       <div class="row"><button class="btn" onclick="acceptOffer(${o.clubId})">Aceitar</button>
         <button class="btn ghost" onclick="declineOffer(${o.clubId})">Recusar</button></div></div>`;
   }).join(''):'<div class="muted" style="font-size:13px">Nenhuma proposta no momento. Continue jogando (ou avançando rodadas) e observe sua reputação.</div>';
+  const offersHint=(!G.employed&&G.offers.length)?'<div class="muted" style="font-size:11px;margin-bottom:8px">Seu currículo abre portas em vários níveis. Escolha manter o patamar, recomeçar mais abaixo ou aceitar um desafio acima.</div>':'';
 
   const log=G.careerLog||[];
   const count=t=>log.filter(e=>e.type===t).length;
@@ -1061,8 +1145,8 @@ function renderCarreira(){
      <div class="kpi"><span class="k">Clubes treinados</span><span class="v">${clubes.length}</span></div>
    </div>
    ${clubes.length?`<div class="muted" style="font-size:12px;margin-bottom:10px">Clubes: ${clubes.join(' · ')}</div>`:''}`;
-  const iconFor={job:'🤝',title:'🏆',cup:'🏅',promo:'⬆',releg:'⬇',resign:'🚪',season:'📋'};
-  const colFor={title:'grass',cup:'amber',promo:'grass',releg:'danger',resign:'muted',job:'',season:'muted'};
+  const iconFor={job:'🤝',title:'🏆',cup:'🏅',promo:'⬆',releg:'⬇',resign:'🚪',fired:'⛔',season:'📋'};
+  const colFor={title:'grass',cup:'amber',promo:'grass',releg:'danger',resign:'muted',fired:'danger',job:'',season:'muted'};
   const timeline=log.length?[...log].reverse().map(e=>`
      <div class="rbrow"><span class="mono muted" style="min-width:34px">T${e.season}</span>
        <span style="min-width:20px">${iconFor[e.type]||'•'}</span>
@@ -1080,12 +1164,15 @@ function renderCarreira(){
        <div class="row" style="justify-content:space-between"><div style="font-weight:700;font-size:16px">${G.manager.name}</div>
          <span class="pill">${repLabel(rep)}</span></div>
        <div class="muted" style="font-size:13px;margin-top:4px">${status}</div>
-       <div class="row" style="justify-content:space-between;margin-top:12px"><span class="eyebrow">Reputação</span><span class="mono" style="font-weight:700;font-size:18px">${rep}</span></div>
-       <div class="repbar"><i style="width:${rep}%"></i></div>
-       <div class="muted" style="font-size:11px;margin-top:8px">Vitórias contra times mais fortes elevam sua reputação; tropeços contra os mais fracos a derrubam.</div>
+       <div class="row" style="justify-content:space-between;margin-top:12px"><span class="eyebrow">Reputação</span><span class="mono ${rep<=FIRE_REP?'danger':rep<=WARN_REP?'amber':''}" style="font-weight:700;font-size:18px">${rep}</span></div>
+       <div class="repbar"><i style="width:${rep}%;background:${rep<=WARN_REP?'linear-gradient(90deg,#c0392b,#e67e22)':'linear-gradient(90deg,var(--grass),var(--amber))'}"></i></div>
+       ${(G.employed&&rep<=WARN_REP)?`<div class="card" style="border-color:var(--danger);background:rgba(192,57,43,.08);margin-top:10px;padding:10px 12px">
+         <div class="danger" style="font-weight:700;font-size:13px">⚠ Possível demissão</div>
+         <div class="muted" style="font-size:12px;margin-top:3px">A diretoria está insatisfeita. Se sua reputação cair a ${FIRE_REP}, você será demitido. Vença jogos — de preferência contra adversários fortes — para recuperar a confiança.</div></div>`
+       :`<div class="muted" style="font-size:11px;margin-top:8px">Vitórias contra times mais fortes elevam sua reputação; tropeços contra os mais fracos a derrubam. Abaixo de ${WARN_REP}, a diretoria acende o alerta; em ${FIRE_REP}, demite.</div>`}
      </div>
      ${resignCard}
-     <div class="card"><div class="eyebrow" style="margin-bottom:10px">Propostas de emprego</div>${offersHTML}</div>
+     <div class="card"><div class="eyebrow" style="margin-bottom:10px">Propostas de emprego</div>${offersHint}${offersHTML}</div>
    </div><div>
      ${historyCard}
    </div></div>`;
@@ -1093,6 +1180,7 @@ function renderCarreira(){
 function declineOffer(id){G.offers=G.offers.filter(o=>o.clubId!==id);refreshTop();renderCarreira();}
 function doResign(){
   logCareer('resign',`Pediu demissão do ${G.teams[G.myId].nome}`);
+  G.lastEmployedDiv=G.teams[G.myId].div;
   G.budgets[G.myId]=G.didim;G.formerClubId=G.myId;G.viewDiv=G.div;
   G.myId=null;G.employed=false;G.unemployedRounds=0;G.offers=[];CONFIRM_RESIGN=false;
   refreshTop();autosave();go('carreira');
@@ -1103,13 +1191,30 @@ function acceptOffer(clubId){
   if(G.myId!=null)G.budgets[G.myId]=G.didim;
   G.formerClubId=G.myId;G.myId=clubId;G.div=t.div;G.employed=true;G.unemployedRounds=0;
   G.didim=G.budgets[clubId];G.viewDiv=t.div;
-  G.lineup=autoLineup(t,"4-3-3");G.offers=[];MKT.list=null;CONFIRM_RESIGN=false;
+  G.lineup=autoLineup(t,"4-3-3");G.offers=[];G.buyOffers=[];MKT.list=null;CONFIRM_RESIGN=false;
   logCareer('job',`Assumiu o ${t.nome} (${DIV_NAMES[t.div]})`);
   refreshTop();autosave();go('hub');
   toast(`Você é o novo treinador do ${t.nome}!`);
 }
 
 /* ===================== PROPOSTAS / REPUTAÇÃO ===================== */
+const FIRE_REP=20;    // reputação em que a diretoria demite
+const WARN_REP=35;    // reputação em que soa o alerta de "possível demissão"
+function getFired(){
+  const cn=G.teams[G.myId].nome;
+  logCareer('fired',`⛔ Demitido pelo ${cn} por baixo desempenho (reputação ${Math.round(G.manager.reputation)})`);
+  G.lastEmployedDiv=G.teams[G.myId].div;
+  G.budgets[G.myId]=G.didim;G.formerClubId=G.myId;G.viewDiv=G.div;
+  G.myId=null;G.employed=false;G.unemployedRounds=0;G.offers=[];G.buyOffers=[];CONFIRM_RESIGN=false;
+  G.justFired=true;
+  refreshTop();autosave();go('carreira');
+  toast(`⛔ Você foi DEMITIDO do ${cn}. A diretoria perdeu a confiança no seu trabalho.`);
+}
+function checkDismissal(){
+  if(!G.employed||G.myId==null)return false;
+  if(G.manager.reputation<=FIRE_REP){getFired();return true;}
+  return false;
+}
 function logCareer(type,text){
   if(!G.careerLog)G.careerLog=[];
   G.careerLog.push({season:G.season,type,text});
@@ -1133,6 +1238,29 @@ function addOffer(t,stepUp){
   G.offers.push({clubId:t.id,div:t.div,prestige:t.prestige,made:G.round,expires:G.round+3});
   toast(`Proposta: ${t.nome} quer você como treinador.`);
 }
+function coachRecord(){
+  // pontuação de currículo a partir do Histórico do Treinador
+  const log=G.careerLog||[];
+  let s=0;
+  log.forEach(e=>{if(e.type==='title')s+=2;else if(e.type==='cup'&&/CAMPEÃO/.test(e.text))s+=2;
+    else if(e.type==='promo')s+=1.2;else if(e.type==='cup')s+=0.6;else if(e.type==='releg')s-=1;else if(e.type==='fired')s-=0.6;});
+  return s;
+}
+function coachTargetDiv(fromDiv){
+  // divisão-alvo: ancorada na de saída, ajustada pelo currículo (teto: no máx. 1 divisão acima)
+  const rec=clamp(coachRecord(),-6,6);
+  let shift=0;                                   // negativo = divisão mais forte (número menor)
+  if(rec>=3)shift=-1;                            // currículo forte → pode subir 1 divisão
+  else if(rec<=-3)shift=1;                       // currículo ruim → desce 1
+  const base=(fromDiv==null?4:fromDiv)+shift;
+  return clamp(base,0,4);
+}
+function offerTier(div,fromDiv){                 // rótulo relativo à divisão de onde saiu
+  const ref=fromDiv==null?4:fromDiv;
+  if(div<ref)return {key:'up',txt:'↑ desafio · divisão superior',bg:'rgba(43,217,127,.14)',bd:'rgba(43,217,127,.45)',fg:'#5fd69b'};
+  if(div>ref)return {key:'down',txt:'↓ recomeço · divisão inferior',bg:'rgba(255,201,77,.14)',bd:'rgba(255,201,77,.45)',fg:'#e0b355'};
+  return {key:'same',txt:'= mesmo patamar',bg:'rgba(120,162,255,.14)',bd:'rgba(120,162,255,.45)',fg:'#9fc0e6'};
+}
 function generateOffers(){
   G.offers=G.offers.filter(o=>o.expires>=G.round&&o.clubId!==G.myId);
   const R=G.manager.reputation,active=new Set(G.offers.map(o=>o.clubId));
@@ -1145,14 +1273,37 @@ function generateOffers(){
       if(pool.length){pool.sort((a,b)=>Math.abs(a.prestige-R)-Math.abs(b.prestige-R));addOffer(pool[0],true);}
     }
   }else{
-    const relax=G.unemployedRounds*4;
-    let prob=clamp(0.45+G.unemployedRounds*0.12,0,0.92);
+    // desempregado: propostas ancoradas na divisão de saída + histórico (inferiores, iguais e até superiores)
+    const fromDiv=G.lastEmployedDiv!=null?G.lastEmployedDiv:(G.viewDiv!=null?G.viewDiv:4);
+    const targetDiv=coachTargetDiv(fromDiv);
+    let prob=clamp(0.5+G.unemployedRounds*0.14,0,0.95);
     if(Math.random()<prob){
-      let pool=cand.filter(t=>R>=t.prestige-10-relax&&t.prestige<=R+18);
-      if(!pool.length&&G.unemployedRounds>=2)                 // rede de segurança: os mais fracos sempre chamam
-        pool=[...cand].sort((a,b)=>a.prestige-b.prestige).slice(0,4);
-      pool.sort((a,b)=>Math.abs(a.prestige-R)-Math.abs(b.prestige-R));
-      (Math.random()<0.4?pool.slice(0,2):pool.slice(0,1)).forEach(t=>addOffer(t,false));
+      // faixa de divisões: do alvo-1 (um acima) até fromDiv+1 (um abaixo do ponto de saída), nunca mais que 1 acima da saída
+      const hiDiv=clamp(Math.min(targetDiv-1,fromDiv-1),0,4);   // teto: 1 divisão acima da de saída
+      const loDiv=clamp((fromDiv==null?4:fromDiv)+1,0,4);       // piso: 1 divisão abaixo da de saída
+      const buckets={};
+      for(let d=hiDiv;d<=loDiv;d++){
+        const inDiv=cand.filter(t=>t.div===d).sort((a,b)=>Math.abs(b.prestige-a.prestige));  // varia prestígio dentro da divisão
+        if(inDiv.length)buckets[d]=inDiv;
+      }
+      const divs=Object.keys(buckets).map(Number);
+      if(divs.length){
+        // pesos: favorece "mesmo patamar" e "um abaixo"; superiores mais raros
+        const pickDiv=()=>{const w=divs.map(d=>d<fromDiv?1:d===fromDiv?3:2);
+          let r=Math.random()*w.reduce((a,b)=>a+b,0);for(let i=0;i<divs.length;i++){r-=w[i];if(r<=0)return divs[i];}return divs[0];};
+        const chosen=new Set();
+        const n=1+(Math.random()<0.75?1:0)+(Math.random()<0.4?1:0);   // 1 a 3 propostas
+        for(let k=0;k<n*3&&chosen.size<n;k++){
+          const d=pickDiv();const arr=buckets[d];if(!arr||!arr.length)continue;
+          const t=arr[rint(0,Math.min(arr.length-1,3))];              // um dos clubes de destaque da divisão
+          if(t&&!chosen.has(t.id)){chosen.add(t.id);addOffer(t,false);}
+        }
+      }
+      // rede de segurança: garante ao menos 1 proposta se a temporada avançou
+      if(!G.offers.length&&G.unemployedRounds>=2){
+        const safe=[...cand].filter(t=>t.div>=fromDiv).sort((a,b)=>a.prestige-b.prestige)[0]||[...cand].sort((a,b)=>a.prestige-b.prestige)[0];
+        if(safe)addOffer(safe,false);
+      }
     }
   }
   G.offers=G.offers.slice(0,4);
@@ -1160,7 +1311,7 @@ function generateOffers(){
 }
 
 /* ===================== MERCADO ===================== */
-let MKT={tab:'comprar',filter:'ALL',list:null,maxPrice:null};
+let MKT={tab:'comprar',filter:'ALL',list:null,maxPrice:null,minOvr:0,age:'ALL',club:'ALL'};
 function totalRounds(){return G.leagues?G.leagues[0].fixtures.length:30;}
 function windowOpen(){const mid=Math.floor(totalRounds()/2);return G.round<=2 || (G.round>=mid-1&&G.round<=mid+1);}
 function windowInfo(){
@@ -1168,17 +1319,34 @@ function windowInfo(){
   const mid=Math.floor(totalRounds()/2);const next=G.round<mid-1?('na '+mid+'ª rodada'):'no início da próxima temporada';
   return {open:false,txt:'🔒 Janela fechada — reabre '+next};
 }
-function refreshMarket(){
-  const pool=[];
-  G.teams.forEach(t=>{if(t.id===G.myId||t.active===false||t.squad.length<17)return;
-    [...t.squad].sort((a,b)=>a.ovr-b.ovr).slice(0,6).forEach(p=>pool.push({p,from:t.id,price:p.valor*rnd(1.15,1.7),div:t.div}));});
-  for(let i=pool.length-1;i>0;i--){const j=rint(0,i);[pool[i],pool[j]]=[pool[j],pool[i]];}
-  const myDiv=(G.myId!=null&&G.teams[G.myId])?G.teams[G.myId].div:4;
-  const cheap=pool.filter(x=>x.div>=myDiv).slice(0,10);           // garante opções da sua faixa (divisão igual ou abaixo)
-  const cheapIds=new Set(cheap.map(x=>x.p.id));
-  const rest=pool.filter(x=>!cheapIds.has(x.p.id)).slice(0,26);
-  MKT.list=cheap.concat(rest).sort((a,b)=>b.p.ovr-a.p.ovr);
+function ageBucket(a){return a<=21?'young':a<=29?'peak':'vet';}
+function releaseClause(p){
+  // multa = valor de mercado × (1.4 a 2.0), maior para craques e contratos longos
+  const q=(p.ovr-60)/60;
+  const cf=(p.contract||1)>=3?1.12:(p.contract||1)<=1?0.9:1;
+  return Math.round(p.valor*(1.4+Math.max(0,q)*0.6)*cf);
 }
+function searchMarket(){
+  // Busca real: varre o elenco de TODOS os clubes aplicando os filtros ativos.
+  const capBase=MKT.maxPrice==='caixa'?(G.didim||0):MKT.maxPrice;
+  const res=[];
+  G.teams.forEach(t=>{
+    if(t.id===G.myId||t.active===false||t.squad.length<17)return;      // não vende titular improvável
+    if(MKT.club!=='ALL'&&t.id!==MKT.club)return;
+    t.squad.forEach(p=>{
+      if(MKT.filter!=='ALL'&&p.grupo!==MKT.filter)return;
+      if((MKT.minOvr||0)>0&&p.ovr<MKT.minOvr)return;
+      if(MKT.age!=='ALL'&&ageBucket(p.idade)!==MKT.age)return;
+      const clause=releaseClause(p);
+      if(capBase!=null&&clause>capBase)return;
+      res.push({p,from:t.id,price:clause,div:t.div});
+    });
+  });
+  res.sort((a,b)=>b.p.ovr-a.p.ovr||a.price-b.price);
+  MKT.total=res.length;
+  MKT.list=res.slice(0,40);                                            // teto de 40 resultados
+}
+function refreshMarket(){searchMarket();}
 /* --- propostas da IA pelos SEUS jogadores --- */
 function generateTransferOffers(){
   if(!G.employed||G.myId==null||!windowOpen())return;
@@ -1217,7 +1385,7 @@ function acceptTransferOffer(pid){
   player.teamId=buyer.id;buyer.squad.push(player);
   G.didim+=o.fee;G.budgets[o.from]=(G.budgets[o.from]||0)-o.fee;
   G.transferOffers=G.transferOffers.filter(x=>x.playerId!==pid);
-  G.lineup=autoLineup(my,G.lineup.formation);
+  repairLineup(my);
   refreshTop();renderMercado();toast(`${player.nome} vendido ao ${buyer.nome} por ${money(o.fee)} didim.`);
 }
 function rejectTransferOffer(pid){G.transferOffers=G.transferOffers.filter(x=>x.playerId!==pid);refreshTop();renderMercado();}
@@ -1237,12 +1405,26 @@ function listForSale(pid){
   p.forSale=Math.round(v*1e6);
   renderMercado();toast(p.nome+' anunciado por '+money(p.forSale)+'. Propostas chegam na janela de transferências.');
 }
+function setMkt(k,v){MKT[k]=v;searchMarket();renderMercado();}
 function renderMercado(){
-  if(!MKT.list)refreshMarket();const my=G.teams[G.myId];const win=windowInfo();
+  if(!MKT.list)searchMarket();const my=G.teams[G.myId];const win=windowInfo();
   const wageBill=my.squad.reduce((s,p)=>s+(p.wage||0),0);
-  const filterBtns=['ALL',...GROUPS].map(g=>`<button class="${MKT.filter===g?'active':''}" onclick="MKT.filter='${g}';renderMercado()">${g==='ALL'?'Todos':g}</button>`).join('');
-  const PRICE_CAPS=[[null,'Qualquer preço'],[5e6,'≤ 5 mi'],[20e6,'≤ 20 mi'],[60e6,'≤ 60 mi'],['caixa','≤ meu caixa']];
-  const priceBtns=PRICE_CAPS.map(([v,l])=>`<button class="${MKT.maxPrice===v?'active':''}" onclick="MKT.maxPrice=${v==null?'null':(v==='caixa'?"'caixa'":v)};renderMercado()">${l}</button>`).join('');
+  const filterBtns=['ALL',...GROUPS].map(g=>`<button class="${MKT.filter===g?'active':''}" onclick="setMkt('filter','${g}')">${g==='ALL'?'Todos':g}</button>`).join('');
+  const OVRS=[[0,'Força: qualquer'],[60,'≥ 60'],[70,'≥ 70'],[80,'≥ 80'],[85,'≥ 85']];
+  const ovrBtns=OVRS.map(([v,l])=>`<button class="${(MKT.minOvr||0)===v?'active':''}" onclick="setMkt('minOvr',${v})">${l}</button>`).join('');
+  const AGES=[['ALL','Idade: qualquer'],['young','Jovem ≤21'],['peak','Auge 22–29'],['vet','Veterano 30+']];
+  const ageBtns=AGES.map(([v,l])=>`<button class="${MKT.age===v?'active':''}" onclick="setMkt('age','${v}')">${l}</button>`).join('');
+  const PRICE_CAPS=[[null,'Preço: qualquer'],[5e6,'≤ 5 mi'],[20e6,'≤ 20 mi'],[60e6,'≤ 60 mi'],['caixa','≤ meu caixa']];
+  const priceBtns=PRICE_CAPS.map(([v,l])=>`<button class="${MKT.maxPrice===v?'active':''}" onclick="setMkt('maxPrice',${v==null?'null':(v==='caixa'?"'caixa'":v)})">${l}</button>`).join('');
+  const clubOpts=`<option value="ALL"${MKT.club==='ALL'?' selected':''}>Time: todos</option>`+
+    [0,1,2,3,4].map(d=>`<optgroup label="${DIV_NAMES[d]}">`+
+      [...Lg(d).teamIds].filter(id=>id!==G.myId).map(id=>G.teams[id])
+        .sort((a,b)=>a.nome.localeCompare(b.nome))
+        .map(t=>`<option value="${t.id}"${MKT.club===t.id?' selected':''}>${t.nome}</option>`).join('')+
+      `</optgroup>`).join('');
+  const clubSel=`<select onchange="setMkt('club',this.value==='ALL'?'ALL':+this.value)">${clubOpts}</select>`;
+  const clearBtn=(MKT.filter!=='ALL'||MKT.minOvr>0||MKT.age!=='ALL'||MKT.club!=='ALL'||MKT.maxPrice!=null)
+    ?`<button onclick="MKT.filter='ALL';MKT.minOvr=0;MKT.age='ALL';MKT.club='ALL';MKT.maxPrice=null;searchMarket();renderMercado()">✕ limpar filtros</button>`:'';
   // propostas da IA
   const offersBlock=G.transferOffers.length?`<div class="card" style="border-color:var(--amber);margin-bottom:14px">
      <div class="eyebrow amber" style="margin-bottom:10px">Propostas recebidas pelos seus jogadores</div>
@@ -1252,18 +1434,35 @@ function renderMercado(){
            <div class="muted" style="font-size:12px">Oferta <span class="amber">${money(o.fee)}</span> · valor ${money(p.valor)} · OVR ${p.ovr} · contrato ${p.contract||0}a</div></div>
          <div class="row"><button class="btn" onclick="acceptTransferOffer(${o.playerId})">Aceitar</button>
            <button class="btn ghost" onclick="rejectTransferOffer(${o.playerId})">Recusar</button></div></div>`;}).join('')}</div></div>`:'';
+  // minhas propostas de compra (negociação)
+  const buyBlock=(G.buyOffers&&G.buyOffers.length)?`<div class="card" style="border-color:var(--line);margin-bottom:14px">
+     <div class="eyebrow" style="margin-bottom:10px">Minhas propostas de compra <span class="muted">· ${money(reservedCash())} reservados</span></div>
+     <div class="grid" style="gap:8px">${G.buyOffers.map(o=>{const from=G.teams[o.toClub];const rem=Math.max(0,o.expires-G.round);
+       if(o.status==='counter')return `<div class="offer up">${badgeHTML(from,34)}
+         <div class="oinfo"><div style="font-weight:700">${from.nome} · ${o.nome} <span class="amber" style="font-size:11px">contraproposta</span></div>
+           <div class="muted" style="font-size:12px">Pedem <span class="amber">${money(o.counter)}</span> (sua oferta: ${money(o.bid)}) · responda em ${rem} rodada(s)</div></div>
+         <div class="row"><button class="btn" onclick="acceptCounter(${o.playerId})">Aceitar ${money(o.counter)}</button>
+           <button class="btn ghost" onclick="cancelBuyOffer(${o.playerId})">Desistir</button></div></div>`;
+       return `<div class="offer">${badgeHTML(from,34)}
+         <div class="oinfo"><div style="font-weight:700">${from.nome} · ${o.nome}</div>
+           <div class="muted" style="font-size:12px">Sua oferta <span class="amber">${money(o.bid)}</span> · multa ${money(o.clause)} · aguardando (${rem} rodada(s))</div></div>
+         <button class="btn ghost" onclick="cancelBuyOffer(${o.playerId})">Retirar</button></div>`;}).join('')}</div>
+     <div class="muted" style="font-size:11px;margin-top:8px">O valor ofertado fica reservado do seu caixa enquanto a proposta está em aberto. Sem resposta em 2 rodadas = recusada.</div></div>`:'';
   let content;
   if(MKT.tab==='comprar'){
-    let items=MKT.list;if(MKT.filter!=='ALL')items=items.filter(x=>x.p.grupo===MKT.filter);
-    const cap=MKT.maxPrice==='caixa'?G.didim:MKT.maxPrice;
-    if(cap!=null)items=items.filter(x=>x.price<=cap);
-    content=items.map(x=>{const canBuy=win.open&&G.didim>=x.price&&my.squad.length<26;
+    const items=MKT.list;
+    const pendingIds=new Set((G.buyOffers||[]).map(o=>o.playerId));
+    content=items.map(x=>{const enough=availableCash()>=x.price&&my.squad.length<26&&G.teams[x.from].squad.length>17;
+      const canClause=win.open&&enough;const hasOffer=pendingIds.has(x.p.id);
       return `<div class="prow" style="cursor:default"><span class="pos ${x.p.grupo}">${x.p.grupo}</span>
         <span class="pname">${x.p.nome} <span class="sub">· ${x.p.idade}a · ${money(x.p.wage)}/temp · ${G.teams[x.from].nome}</span></span>
         <span class="ovr ${ovrClass(x.p.ovr)}">${x.p.ovr}</span>
-        <span class="val" style="min-width:80px;text-align:right">${money(x.price)}</span>
-        <button class="btn" style="padding:7px 12px" ${canBuy?'':'disabled'} onclick="buyPlayer(${x.p.id},${x.from})">Comprar</button></div>`;
-    }).join('')||'<div class="muted" style="font-size:13px">Nenhum jogador nesse filtro.</div>';
+        <span class="val" style="min-width:78px;text-align:right" title="multa rescisória">multa<br>${money(x.price)}</span>
+        ${hasOffer?'<span class="muted" style="font-size:11px;min-width:96px;text-align:center">proposta enviada</span>'
+        :`<div class="row" style="gap:4px">
+          <button class="btn ghost" style="padding:6px 8px;font-size:12px" ${win.open?'':'disabled'} onclick="promptBuyOffer(${x.p.id},${x.from})">Proposta</button>
+          <button class="btn" style="padding:6px 8px;font-size:12px" ${canClause?'':'disabled'} onclick="payClause(${x.p.id},${x.from})">Pagar multa</button></div>`}</div>`;
+    }).join('')||'<div class="muted" style="font-size:13px">Nenhum jogador encontrado com esses filtros. Tente afrouxar a busca.</div>';
   }else{
     let items=[...my.squad].sort((a,b)=>GROUPS.indexOf(a.grupo)-GROUPS.indexOf(b.grupo)||b.ovr-a.ovr);
     if(MKT.filter!=='ALL')items=items.filter(p=>p.grupo===MKT.filter);
@@ -1283,33 +1482,121 @@ function renderMercado(){
      <div class="row" style="justify-content:space-between">
        <div><div class="eyebrow ${win.open?'grass':''}">${win.txt}</div>
          <div class="muted" style="font-size:12px;margin-top:3px">Folha salarial: <span class="amber">${money(wageBill)}/temporada</span> · descontada no fim de cada temporada</div></div>
-       <div class="stat-chip"><span class="k">Caixa</span><span class="v amber">${money(G.didim)} didim</span></div></div></div>
-   ${offersBlock}
+       <div class="stat-chip"><span class="k">Caixa${reservedCash()>0?' disponível':''}</span><span class="v amber">${money(availableCash())} didim</span></div></div></div>
+   ${offersBlock}${buyBlock}
    <div class="tabs"><button class="${MKT.tab==='comprar'?'active':''}" onclick="MKT.tab='comprar';renderMercado()">Comprar</button>
      <button class="${MKT.tab==='vender'?'active':''}" onclick="MKT.tab='vender';renderMercado()">Meu elenco (${my.squad.length}) · contratos</button></div>
-   <div class="tabs">${filterBtns}<div class="spacer"></div>
-     ${MKT.tab==='comprar'?'<button onclick="refreshMarket();renderMercado()">↻ Atualizar lista</button>':''}</div>
-   ${MKT.tab==='comprar'?`<div class="tabs">${priceBtns}</div>`:''}
+   ${MKT.tab==='comprar'?`
+   <div class="card" style="margin-bottom:10px;padding:12px">
+     <div class="eyebrow" style="margin-bottom:8px">🔎 Buscar jogadores</div>
+     <div class="tabs">${filterBtns}</div>
+     <div class="tabs">${ovrBtns}</div>
+     <div class="tabs">${ageBtns}</div>
+     <div class="tabs">${priceBtns}</div>
+     <div class="tabs" style="align-items:center;margin-bottom:0">${clubSel}<div class="spacer"></div>${clearBtn}</div>
+   </div>
+   <div class="muted" style="font-size:12px;margin:0 2px 8px">${MKT.total||0} jogador(es) encontrado(s)${(MKT.total||0)>40?' — mostrando os 40 melhores':''}.</div>`
+   :`<div class="tabs">${filterBtns}</div>`}
    <div class="card"><div class="plist scroll">${content}</div></div>
    <div class="muted" style="font-size:12px;margin-top:8px">Compra/venda só com a janela aberta (início e meio da temporada). Elenco: 16–26. 📢 Anuncie um jogador com o SEU preço: se o pedido for razoável, clubes fazem propostas próximas do valor pedido na janela; pedidos exagerados atraem contrapropostas menores (ou silêncio).</div>`;
 }
-function buyPlayer(pid,fromId){
+function reservedCash(){return (G.buyOffers||[]).reduce((s,o)=>s+(o.reserved||0),0);}
+function availableCash(){return (G.didim||0)-reservedCash();}
+function payClause(pid,fromId){        // pagar a multa cheia = transferência imediata garantida
   if(!windowOpen())return toast("Janela de transferências fechada.");
-  const my=G.teams[G.myId],from=G.teams[fromId],item=MKT.list.find(x=>x.p.id===pid);if(!item)return;
-  if(G.didim<item.price)return toast("Caixa insuficiente.");
+  const my=G.teams[G.myId],from=G.teams[fromId];const p=from&&from.squad.find(x=>x.id===pid);if(!p)return;
+  const clause=releaseClause(p);
+  if(availableCash()<clause)return toast("Caixa insuficiente (descontando propostas reservadas).");
   if(my.squad.length>=26)return toast("Elenco cheio (máx. 26).");
-  if(from.squad.length<=16)return toast("O clube vendedor não pode liberar mais jogadores.");
-  const player=from.squad.splice(from.squad.findIndex(p=>p.id===pid),1)[0];
-  player.teamId=my.id;my.squad.push(player);G.didim-=item.price;G.budgets[fromId]+=item.price;
-  MKT.list=MKT.list.filter(x=>x.p.id!==pid);G.lineup=autoLineup(my,G.lineup.formation);
-  refreshTop();renderMercado();toast(`${player.nome} contratado por ${money(item.price)} didim.`);
+  if(from.squad.length<=17)return toast("O clube vendedor não pode liberar mais jogadores.");
+  doTransferIn(p,from,clause);
+  toast(`${p.nome} contratado por ${money(clause)} didim (multa paga).`);
+}
+function doTransferIn(player,from,fee){
+  const my=G.teams[G.myId];
+  from.squad.splice(from.squad.findIndex(x=>x.id===player.id),1);
+  player.teamId=my.id;player.forSale=null;my.squad.push(player);
+  G.didim-=fee;G.budgets[from.id]=(G.budgets[from.id]||0)+fee;
+  searchMarket();repairLineup(my);refreshTop();
+}
+function makeBuyOffer(pid,fromId,valor){
+  if(!windowOpen())return toast("Só dá para negociar com a janela aberta.");
+  const my=G.teams[G.myId],from=G.teams[fromId];const p=from&&from.squad.find(x=>x.id===pid);if(!p)return;
+  if(!G.buyOffers)G.buyOffers=[];
+  if(G.buyOffers.length>=3)return toast("Máximo de 3 propostas de compra em aberto.");
+  if(G.buyOffers.some(o=>o.playerId===pid))return toast("Você já tem proposta por esse jogador.");
+  if(my.squad.length>=26)return toast("Elenco cheio (máx. 26).");
+  if(from.squad.length<=17)return toast("Esse clube não pode liberar mais jogadores.");
+  const bid=Math.round(valor);
+  if(!bid||bid<=0)return toast("Valor inválido.");
+  if(availableCash()<bid)return toast("Caixa insuficiente para reservar essa proposta.");
+  const clause=releaseClause(p);
+  if(bid>=clause){return payClause(pid,fromId);}            // ofereceu ≥ multa → compra direto
+  G.buyOffers.push({playerId:pid,toClub:fromId,bid,reserved:bid,clause,ovr:p.ovr,nome:p.nome,
+    made:G.round,expires:G.round+2,status:'pending',counter:null});
+  refreshTop();renderMercado();
+  toast(`Proposta de ${money(bid)} enviada por ${p.nome}. O clube tem até 2 rodadas para responder.`);
+}
+function promptBuyOffer(pid,fromId){
+  const from=G.teams[fromId];const p=from&&from.squad.find(x=>x.id===pid);if(!p)return;
+  const clause=releaseClause(p);
+  let v=null;
+  try{const raw=prompt(`Proposta por ${p.nome} (multa: ${money(clause)}).\nOfereça um valor em milhões de didim:`,(Math.round(clause*0.7)/1e6).toFixed(1));
+    if(raw==null)return;v=parseFloat(String(raw).replace(',','.'));}catch(e){return;}
+  if(!v||v<=0)return toast("Valor inválido.");
+  makeBuyOffer(pid,fromId,Math.round(v*1e6));
+}
+function acceptCounter(pid){           // aceitar a contraproposta do clube
+  const o=(G.buyOffers||[]).find(x=>x.playerId===pid);if(!o||o.status!=='counter')return;
+  const from=G.teams[o.toClub],p=from&&from.squad.find(x=>x.id===pid);
+  if(!p){G.buyOffers=G.buyOffers.filter(x=>x!==o);return renderMercado();}
+  if(G.teams[G.myId].squad.length>=26){return toast("Elenco cheio (máx. 26).");}
+  if(from.squad.length<=17){G.buyOffers=G.buyOffers.filter(x=>x!==o);return toast("O clube não pode mais liberar o jogador.");}
+  const fee=o.counter;
+  if(availableCash()+o.reserved<fee){return toast("Caixa insuficiente para a contraproposta.");}
+  G.buyOffers=G.buyOffers.filter(x=>x!==o);
+  doTransferIn(p,from,fee);
+  renderMercado();toast(`${p.nome} contratado por ${money(fee)} (contraproposta aceita).`);
+}
+function cancelBuyOffer(pid){G.buyOffers=(G.buyOffers||[]).filter(o=>o.playerId!==pid);refreshTop();renderMercado();toast('Proposta retirada.');}
+function resolveBuyOffers(){
+  // roda a cada rodada: clubes respondem; silêncio por 2 rodadas = recusa
+  if(!G.buyOffers||!G.buyOffers.length)return;
+  const keep=[];
+  G.buyOffers.forEach(o=>{
+    const from=G.teams[o.toClub];const p=from&&from.squad.find(x=>x.id===o.playerId);
+    if(!p||from.squad.length<=17){toast(`Proposta por ${o.nome} caiu: jogador indisponível.`);return;}
+    if(o.status==='counter'){                       // aguardando sua resposta à contraproposta
+      if(G.round>o.expires){toast(`Contraproposta por ${o.nome} expirou.`);return;}
+      keep.push(o);return;
+    }
+    const ratio=o.bid/o.clause;                     // quão perto da multa
+    const r=Math.random();
+    if(ratio>=0.85){                                // oferta cheia-ish: aceita
+      if(availableCash()+o.reserved<o.bid){toast(`Faltou caixa para fechar ${o.nome}.`);return;}
+      doTransferIn(p,from,o.bid);toast(`✅ ${from.nome} ACEITOU sua proposta por ${o.nome} (${money(o.bid)}).`);return;
+    }
+    if(ratio>=0.6){                                 // intermediária: às vezes aceita, às vezes contrapropõe
+      if(r<0.4){if(availableCash()+o.reserved<o.bid){toast(`Faltou caixa para fechar ${o.nome}.`);return;}
+        doTransferIn(p,from,o.bid);toast(`✅ ${from.nome} aceitou por ${o.nome} (${money(o.bid)}).`);return;}
+      if(r<0.85){const counter=Math.round((o.bid+o.clause)/2);
+        o.status='counter';o.counter=counter;o.expires=G.round+2;
+        toast(`↩ ${from.nome} fez contraproposta por ${o.nome}: ${money(counter)}.`);keep.push(o);return;}
+      // senão: continua pendente até expirar
+    } else {                                        // muito baixa: recusa se já esperou, ou fica pendente
+      if(G.round>=o.made+1&&r<0.7){toast(`❌ ${from.nome} recusou sua proposta por ${o.nome}.`);return;}
+    }
+    if(G.round>o.expires){toast(`❌ Proposta por ${o.nome} expirou (recusada).`);return;}   // silêncio = recusa
+    keep.push(o);
+  });
+  G.buyOffers=keep;refreshTop();
 }
 function sellPlayer(pid,offer){
   if(!windowOpen())return toast("Janela de transferências fechada.");
   const my=G.teams[G.myId];if(my.squad.length<=16)return toast("Elenco no mínimo (16).");
   const player=my.squad.splice(my.squad.findIndex(p=>p.id===pid),1)[0];
   G.transferOffers=G.transferOffers.filter(x=>x.playerId!==pid);player.forSale=null;
-  G.didim+=offer;G.lineup=autoLineup(my,G.lineup.formation);
+  G.didim+=offer;repairLineup(my);
   refreshTop();renderMercado();toast(`${player.nome} vendido por ${money(offer)} didim.`);
 }
 
@@ -1319,7 +1606,7 @@ function preMatch(){
   if(cupLegDue()){toast('Calendário: você tem jogo da Copa antes desta rodada.');go('copa');return;}
   const nm=nextMatchForMe();
   if(nm&&nm.hg!=null){toast('Você já disputou esta rodada — avançando.');afterMatch();return;}
-  if(G.lineup.starters.length!==11)G.lineup=autoLineup(G.teams[G.myId],G.lineup.formation);
+  if(G.lineup.starters.length!==11)repairLineup(G.teams[G.myId]);
   go('escala');
   const bar=document.createElement('div');bar.className='card';bar.style.marginTop='14px';
   bar.innerHTML=`<div class="row" style="justify-content:space-between">
@@ -1335,12 +1622,12 @@ function launchMatch(){
   const nm=nextMatchForMe();if(!nm)return;
   if(nm.hg!=null){toast('Rodada já disputada — avançando.');afterMatch();return;}   // trava rejogar a mesma rodada
   const sq=G.teams[G.myId].squad;
-  if(G.lineup.starters.some(id=>{const p=sq.find(x=>x.id===id);return !p||!playerAvailable(p);})){
-    G.lineup=autoLineup(G.teams[G.myId],G.lineup.formation);
-    toast('Escalação ajustada: havia jogador suspenso ou lesionado.');
-  }
+  if(G.lineup.starters.length!==11)repairLineup(G.teams[G.myId]);
+  const eff=effectiveLineup(G.teams[G.myId],G.lineup);   // indisponíveis substituídos só nesta partida
+  const swapped=eff.starters.some((id,i)=>id!==G.lineup.starters[i]);
+  if(swapped)toast('Titular suspenso/lesionado substituído automaticamente nesta partida.');
   const my=G.teams[G.myId],iAmHome=nm.home===G.myId,oppId=iAmHome?nm.away:nm.home;
-  const myStart=G.lineup.starters.map(pById),myBench=G.lineup.bench.map(pById);
+  const myStart=eff.starters.map(pById),myBench=eff.bench.map(pById);
   const opp=G.teams[oppId],oL=autoLineup(opp,pick(Object.keys(FORMATIONS)));
   const oStart=oL.starters.map(id=>opp.squad.find(p=>p.id===id));
   MATCH={fx:nm,iAmHome,oppId,home:iAmHome?G.myId:oppId,away:iAmHome?oppId:G.myId,comp:{type:'league'},
@@ -1348,7 +1635,7 @@ function launchMatch(){
     myPow0:xiPower(myStart).all,oppPow0:xiPower(oStart).all,
     mom:0,shots:{home:0,away:0},yellow:new Set(),yc:{home:0,away:0},rc:{home:0,away:0},injuryPending:null,
     subsUsed:0,speed:2,timer:null,paused:false,done:false,half:1,subMode:false,subSel:null,posture:'eq',formation:G.lineup.formation};
-  MATCH.xiIds=G.lineup.starters.slice();
+  MATCH.xiIds=eff.starters.slice();
   MATCH.roundData=precomputeLiveRound();MATCH.scoreDiv=G.div;
   go('partida');document.querySelectorAll('#nav button').forEach(b=>b.classList.remove('active'));
   renderMatch();resumeMatch();
@@ -1795,8 +2082,10 @@ function playByeRound(){
 function afterMatch(){
   G.round++;MATCH=null;
   tickDiscipline();
+  resolveBuyOffers();
   syncCupSchedule();
   G.morale=clamp((G.morale||60)+(60-(G.morale||60))*0.06,20,95);   // moral tende ao neutro com o tempo
+  if(checkDismissal())return;                                       // demitido: encerra aqui
   if(G.round>=myLeague().fixtures.length)finishSeason();else{generateOffers();generateTransferOffers();}
   refreshTop();autosave();go('hub');
 }
@@ -1804,7 +2093,7 @@ function advanceWorldRound(){
   if(G.finished)return toast("Temporada encerrada.");
   G.leagues.forEach(lg=>lg.fixtures[G.round].forEach(m=>{
     if(m.hg!==null)return;const r=simMatch(m.home,m.away);m.hg=r.hg;m.ag=r.ag;applyResult(lg.table,m.home,m.away,r.hg,r.ag);creditGoals(m.home,m.away,r.hg,r.ag);creditGate(m.home);}));
-  G.round++;G.unemployedRounds++;tickDiscipline();syncCupSchedule();
+  G.round++;G.unemployedRounds++;tickDiscipline();resolveBuyOffers();syncCupSchedule();
   G.manager.reputation=clamp(G.manager.reputation-0.4,5,99);
   if(G.round>=Lg(0).fixtures.length)finishSeason();
   generateOffers();refreshTop();autosave();
@@ -1935,8 +2224,10 @@ function cupSimAll(){
 function launchCupLeg(tie,leg){
   const home=leg===1?tie.a:tie.b,away=leg===1?tie.b:tie.a;
   const iAmHome=home===G.myId,oppId=iAmHome?away:home;
-  if(G.lineup.starters.length!==11)G.lineup=autoLineup(G.teams[G.myId],G.lineup.formation);
-  const myStart=G.lineup.starters.map(pById),myBench=G.lineup.bench.map(pById);
+  if(G.lineup.starters.length!==11)repairLineup(G.teams[G.myId]);
+  const eff=effectiveLineup(G.teams[G.myId],G.lineup);
+  if(eff.starters.some((id,i)=>id!==G.lineup.starters[i]))toast('Titular suspenso/lesionado substituído automaticamente nesta partida.');
+  const myStart=eff.starters.map(pById),myBench=eff.bench.map(pById);
   const opp=G.teams[oppId],oL=autoLineup(opp,pick(Object.keys(FORMATIONS)));
   const oStart=oL.starters.map(id=>opp.squad.find(p=>p.id===id));
   MATCH={fx:null,iAmHome,oppId,home,away,comp:{type:'cup',tie,leg,single:tie.single},
@@ -1944,12 +2235,12 @@ function launchCupLeg(tie,leg){
     myPow0:xiPower(myStart).all,oppPow0:xiPower(oStart).all,
     mom:0,shots:{home:0,away:0},yellow:new Set(),yc:{home:0,away:0},rc:{home:0,away:0},injuryPending:null,
     subsUsed:0,speed:2,timer:null,paused:false,done:false,half:1,subMode:false,subSel:null,posture:'eq',formation:G.lineup.formation};
-  MATCH.xiIds=G.lineup.starters.slice();
+  MATCH.xiIds=eff.starters.slice();
   MATCH.roundData=null;MATCH.scoreDiv=null;
   go('partida');document.querySelectorAll('#nav button').forEach(b=>b.classList.remove('active'));
   renderMatch();resumeMatch();
 }
-function afterCupLive(){MATCH=null;cupFinalizeLeg();refreshTop();autosave();go('copa');}
+function afterCupLive(){MATCH=null;cupFinalizeLeg();if(checkDismissal())return;refreshTop();autosave();go('copa');}
 
 function tieAgg(t){ // texto do agregado, do ponto de vista do time a
   if(t.single)return t.leg1?`${t.leg1.hg}-${t.leg1.ag}`:'—';
@@ -2217,16 +2508,19 @@ function allTimeRanking(key,limit){
 }
 function nextSeason(){
   if(!G.cup.done){toast('Finalize a Copa antes de iniciar a próxima temporada.');go('copa');return;}
+  // demissão de fim de temporada: reputação no limite após a campanha
+  if(G.employed&&G.myId!=null&&G.teams[G.myId].active!==false&&G.manager.reputation<=FIRE_REP){getFired();return;}
   computePromotions();
   // clube do usuário rebaixado para fora da 5ª divisão → clube dissolvido, treinador fica livre
   let dissolved=false;
   if(G.employed&&G.myId!=null&&G.teams[G.myId].active===false){
     logCareer('releg',`⬇ ${G.teams[G.myId].nome} rebaixado da 5ª Divisão e dissolvido — você ficou sem clube`);
+    G.lastEmployedDiv=4;
     G.formerClubId=G.myId;G.myId=null;G.employed=false;G.unemployedRounds=0;G.offers=[];dissolved=true;
   }
   developSquads();
   buildLeagues();buildCup();
-  G.round=0;G.season++;G.finished=false;G.seasonGate=0;G.history=[];G.offers=[];G.transferOffers=[];MKT.list=null;G.lastLeagueEarn=0;
+  G.round=0;G.season++;G.finished=false;G.seasonGate=0;G.buyOffers=[];G.history=[];G.offers=[];G.transferOffers=[];MKT.list=null;G.lastLeagueEarn=0;
   if(G.employed){G.div=G.teams[G.myId].div;G.lineup=autoLineup(G.teams[G.myId],G.lineup.formation);G.viewDiv=G.div;}
   else G.viewDiv=clamp(G.viewDiv,0,4);
   refreshTop();go(G.employed?'hub':'carreira');autosave();
@@ -2271,6 +2565,8 @@ function migrateSave(g){
   if(g.lastTV==null)g.lastTV=0;if(g.lastGate==null)g.lastGate=0;
   if(!Array.isArray(g.careerLog))g.careerLog=[];
   if(g.seasonGate==null)g.seasonGate=0;if(g.seasonReview===undefined)g.seasonReview=null;
+  if(!Array.isArray(g.buyOffers))g.buyOffers=[];
+  if(g.lastEmployedDiv===undefined)g.lastEmployedDiv=(g.employed&&g.myId!=null&&g.teams[g.myId])?g.teams[g.myId].div:(g.viewDiv!=null?g.viewDiv:4);
   if(g.cup&&!g.cup.totalLegs){const t0=g.cup.stages&&g.cup.stages[0];
     const entrants=(g.cup.byes?g.cup.byes.length:0)+(t0?t0.ties.length:0);
     g.cup.totalLegs=2+2*Math.round(Math.log2(Math.max(2,entrants)))+1;}
@@ -2296,7 +2592,7 @@ function migrateSave(g){
 function loadFromObj(obj){
   if(!obj||!obj.G)throw new Error('save inválido');
   G=migrateSave(obj.G);PID=obj.PID||PID;MATCH=null;ESC_SEL=null;CONFIRM_RESIGN=false;
-  MKT={tab:'comprar',filter:'ALL',list:null,maxPrice:null};GAME_ACTIVE=true;
+  MKT={tab:'comprar',filter:'ALL',list:null,maxPrice:null,minOvr:0,age:'ALL',club:'ALL'};if(!G.buyOffers)G.buyOffers=[];GAME_ACTIVE=true;
   document.getElementById('startScreen').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
   closeSaveModal();buildNav();refreshTop();go('hub');
