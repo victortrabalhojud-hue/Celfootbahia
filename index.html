@@ -1236,8 +1236,32 @@ function myExpectedVsActual(){
 }
 function repAfterMatch(gf,ga,myPow,oppPow){
   const actual=gf>ga?1:gf<ga?-1:0;
-  const exp=clamp((myPow-oppPow)/16,-0.85,0.85);
-  G.manager.reputation=clamp(G.manager.reputation+(actual-exp)*2.4,5,99);
+  const exp=clamp((myPow-oppPow)/22,-0.6,0.6);        // expectativa menos extrema
+  let delta;
+  if(actual>0){                                        // VITÓRIA: sempre soma de verdade (favorito também)
+    delta=1.1+(1-Math.max(0,exp))*2.2;                 // esperada ~+1.1; zebra até ~+3.3
+  }else if(actual===0){                                // EMPATE: leve, e não afunda o favorito
+    delta=-0.5*Math.max(0,exp)+0.4*Math.max(0,-exp);   // favorito ~−0.3; azarão leve +
+  }else{                                               // DERROTA: punição existe mas é contida
+    delta=-1.0-Math.max(0,exp)*1.4;                    // esperada ~−1.0; favorito que perde ~−1.8
+  }
+  // bônus de moral: time animado (moral alta) sustenta a reputação; moral baixa pesa um pouco
+  const moraleAdj=((G.morale||60)-60)/100*0.5;
+  G.manager.reputation=clamp(G.manager.reputation+delta+moraleAdj,5,99);
+}
+function repCupAdvance(){                               // avançar/vencer no mata-mata dá reputação
+  G.manager.reputation=clamp(G.manager.reputation+2.2,5,99);
+}
+function repSeasonDrift(){
+  // deriva suave por rodada conforme a posição na tabela: G4 sobe, zona de baixo desce
+  if(!G.employed||G.finished)return;
+  const table=sortedTable(G.div);const pos=table.findIndex(r=>r.id===G.myId)+1;if(!pos)return;
+  const N=table.length;
+  let d=0;
+  if(pos<=Math.max(4,Math.round(N*0.25)))d=0.6;        // topo/G4: reputação sobe aos poucos
+  else if(pos<=Math.round(N/2))d=0.2;                  // meio de cima: leve alta
+  else if(pos>=N-1)d=-0.5;                             // zona de rebaixamento: leve queda
+  G.manager.reputation=clamp(G.manager.reputation+d,5,99);
 }
 function addOffer(t,stepUp){
   if(G.offers.some(o=>o.clubId===t.id))return;
@@ -2091,6 +2115,7 @@ function afterMatch(){
   resolveBuyOffers();
   syncCupSchedule();
   G.morale=clamp((G.morale||60)+(60-(G.morale||60))*0.06,20,95);   // moral tende ao neutro com o tempo
+  repSeasonDrift();                                                  // posição na tabela empurra a reputação
   if(checkDismissal())return;                                       // demitido: encerra aqui
   if(G.round>=myLeague().fixtures.length)finishSeason();else{generateOffers();generateTransferOffers();}
   refreshTop();autosave();go('hub');
@@ -2184,7 +2209,13 @@ function cupSimStep(){                            // simula a perna atual de TOD
 function cupFinalizeLeg(){
   const st=cupStage(),single=st.ties[0].single;
   if(G.cup.leg===1&&!single){G.cup.leg=2;return;}
-  st.ties.forEach(resolveTie);st.done=true;cupAdvanceStage();
+  st.ties.forEach(resolveTie);st.done=true;
+  // avançar de fase no mata-mata alavanca a reputação (fora Final/3º, que já pagam no pódio)
+  if(G.employed&&G.myId!=null&&st.name!=='Final'&&st.name!=='Disputa de 3º'){
+    const myTie=st.ties.find(t=>t.a===G.myId||t.b===G.myId);
+    if(myTie&&myTie.winner===G.myId)repCupAdvance();
+  }
+  cupAdvanceStage();
 }
 function cupAdvanceStage(){
   const st=cupStage();
