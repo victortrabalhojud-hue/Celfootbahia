@@ -719,7 +719,7 @@ function startGame(teamId){
     manager:{name:coach,reputation:clamp(my.prestige-8,22,82)},
     season:1,round:0,leagues:null,offers:[],history:[],finished:false,viewDiv:my.div,
     lineup:autoLineup(my,"4-3-3"),lastPos:null,lastPrize:0,lastChamp:false,champions:[],
-    cup:null,leaguePodium:[],lastLeagueEarn:0,transferOffers:[],lastWages:0,legends:[],morale:60,lastTV:0,lastGate:0,careerLog:[],seasonGate:0,seasonReview:null,buyOffers:[],lastEmployedDiv:null};
+    cup:null,leaguePodium:[],lastLeagueEarn:0,transferOffers:[],lastWages:0,legends:[],morale:60,lastTV:0,lastGate:0,careerLog:[],seasonGate:0,seasonReview:null,buyOffers:[],lastEmployedDiv:null,repResetOnHire:false,justFired:false};
   G.didim=budgets[teamId];
   logCareer('job',`${coach} assume o ${my.nome} (${DIV_NAMES[my.div]}) — início da carreira`);
   buildLeagues();buildCup();
@@ -1189,9 +1189,15 @@ function doResign(){
 function acceptOffer(clubId){
   const t=G.teams.find(x=>x.id===clubId);if(!t)return;
   if(G.myId!=null)G.budgets[G.myId]=G.didim;
+  const wasFired=!!G.repResetOnHire;
   G.formerClubId=G.myId;G.myId=clubId;G.div=t.div;G.employed=true;G.unemployedRounds=0;
   G.didim=G.budgets[clubId];G.viewDiv=t.div;
   G.lineup=autoLineup(t,"4-3-3");G.offers=[];G.buyOffers=[];MKT.list=null;CONFIRM_RESIGN=false;
+  if(wasFired){                                   // após demissão: voto de confiança, reputação recomeça em 60
+    G.manager.reputation=Math.max(60,Math.round(G.manager.reputation));
+    G.repResetOnHire=false;G.justFired=false;
+  }
+  // saída em atividade (proposta aceita sem ter sido demitido): mantém a reputação atual
   logCareer('job',`Assumiu o ${t.nome} (${DIV_NAMES[t.div]})`);
   refreshTop();autosave();go('hub');
   toast(`Você é o novo treinador do ${t.nome}!`);
@@ -1206,7 +1212,7 @@ function getFired(){
   G.lastEmployedDiv=G.teams[G.myId].div;
   G.budgets[G.myId]=G.didim;G.formerClubId=G.myId;G.viewDiv=G.div;
   G.myId=null;G.employed=false;G.unemployedRounds=0;G.offers=[];G.buyOffers=[];CONFIRM_RESIGN=false;
-  G.justFired=true;
+  G.justFired=true;G.repResetOnHire=true;   // recomeça a reputação no próximo clube (voto de confiança)
   refreshTop();autosave();go('carreira');
   toast(`⛔ Você foi DEMITIDO do ${cn}. A diretoria perdeu a confiança no seu trabalho.`);
 }
@@ -2567,6 +2573,10 @@ function migrateSave(g){
   if(g.seasonGate==null)g.seasonGate=0;if(g.seasonReview===undefined)g.seasonReview=null;
   if(!Array.isArray(g.buyOffers))g.buyOffers=[];
   if(g.lastEmployedDiv===undefined)g.lastEmployedDiv=(g.employed&&g.myId!=null&&g.teams[g.myId])?g.teams[g.myId].div:(g.viewDiv!=null?g.viewDiv:4);
+  if(g.repResetOnHire===undefined){                 // save no meio de uma demissão: honra o reinício ao ser recontratado
+    const last=(g.careerLog||[]).slice(-1)[0];
+    g.repResetOnHire=(!g.employed&&last&&last.type==='fired');
+  }
   if(g.cup&&!g.cup.totalLegs){const t0=g.cup.stages&&g.cup.stages[0];
     const entrants=(g.cup.byes?g.cup.byes.length:0)+(t0?t0.ties.length:0);
     g.cup.totalLegs=2+2*Math.round(Math.log2(Math.max(2,entrants)))+1;}
