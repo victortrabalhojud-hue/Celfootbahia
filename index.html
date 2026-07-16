@@ -162,6 +162,21 @@ tr.me td:first-child{box-shadow:inset 3px 0 0 var(--grass)}
 .prowline{display:flex;justify-content:space-evenly;align-items:center}
 .token{display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;width:66px;transition:transform .15s var(--ease)}
 .subtag{font-size:8.5px;line-height:1.15;background:rgba(217,164,65,.18);color:var(--amber);border:1px solid rgba(217,164,65,.4);border-radius:4px;padding:1px 4px;margin-top:1px;white-space:nowrap;font-weight:600}
+/* ===== drama da partida ===== */
+.mombar{height:8px;border-radius:999px;background:rgba(10,16,28,.85);border:1px solid var(--line);position:relative;overflow:hidden;margin:8px auto 0;max-width:420px}
+.mombar i{position:absolute;top:0;bottom:0;transition:left .5s var(--ease),right .5s var(--ease),background .4s}
+.momlbl{display:flex;justify-content:space-between;max-width:420px;margin:3px auto 0;font-size:9px;color:var(--muted);font-family:var(--mono);letter-spacing:.12em}
+@keyframes goalpop{0%{transform:scale(1)}30%{transform:scale(1.45);text-shadow:0 0 26px rgba(43,217,127,.9)}100%{transform:scale(1)}}
+.score.goalpop{animation:goalpop .9s var(--ease)}
+@keyframes boardflash{0%{box-shadow:0 0 0 rgba(43,217,127,0)}25%{box-shadow:0 0 60px rgba(43,217,127,.5),inset 0 0 40px rgba(43,217,127,.12)}100%{box-shadow:none}}
+.board.goalflash{animation:boardflash 1s var(--ease)}
+@keyframes tensepulse{0%,100%{opacity:1}50%{opacity:.45}}
+.clock.tense{color:var(--amber);animation:tensepulse 1.1s infinite}
+.fbadge{display:inline-block;width:16px;height:16px;line-height:16px;text-align:center;border-radius:4px;font-size:9.5px;font-weight:800;font-family:var(--mono);margin-right:2px}
+.fbadge.V{background:rgba(43,217,127,.2);color:var(--grass);border:1px solid rgba(43,217,127,.4)}
+.fbadge.E{background:rgba(159,176,200,.14);color:var(--muted);border:1px solid rgba(159,176,200,.3)}
+.fbadge.D{background:rgba(255,90,96,.16);color:var(--danger);border:1px solid rgba(255,90,96,.4)}
+.rnote{font-family:var(--mono);font-size:11px;font-weight:700;min-width:30px;text-align:right}
 .token:hover{transform:translateY(-3px)}
 .token .disc{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;
   font-family:var(--mono);font-weight:700;font-size:13px;color:#052012;
@@ -719,7 +734,7 @@ function startGame(teamId){
     manager:{name:coach,reputation:clamp(my.prestige-8,22,82)},
     season:1,round:0,leagues:null,offers:[],history:[],finished:false,viewDiv:my.div,
     lineup:autoLineup(my,"4-3-3"),lastPos:null,lastPrize:0,lastChamp:false,champions:[],
-    cup:null,leaguePodium:[],lastLeagueEarn:0,transferOffers:[],lastWages:0,legends:[],morale:60,lastTV:0,lastGate:0,careerLog:[],seasonGate:0,seasonReview:null,buyOffers:[],lastEmployedDiv:null,repResetOnHire:false,justFired:false};
+    cup:null,leaguePodium:[],lastLeagueEarn:0,transferOffers:[],lastWages:0,legends:[],morale:60,lastTV:0,lastGate:0,careerLog:[],seasonGate:0,seasonReview:null,buyOffers:[],lastEmployedDiv:null,repResetOnHire:false,justFired:false,seasonAlbum:[]};
   G.didim=budgets[teamId];
   logCareer('job',`${coach} assume o ${my.nome} (${DIV_NAMES[my.div]}) — início da carreira`);
   buildLeagues();buildCup();
@@ -823,6 +838,9 @@ function renderHub(){
       <div class="vs">${played?`${nm.hg}×${nm.ag}`:'×'}</div>
       <div class="row" style="flex:1;justify-content:flex-end;text-align:right"><div><div style="font-weight:700">${away.nome}</div><div class="eyebrow">${!iAmHome?'Mando · você':'Visitante'}</div></div>${badgeHTML(away,34)}</div>
     </div><div class="venue" style="margin-top:10px;padding-top:10px">🏟 ${home.stadium||teamStadium(home.nome)} · casa do ${home.nome}</div>
+    <div class="row" style="gap:14px;margin-top:8px;flex-wrap:wrap">
+      <span class="muted" style="font-size:11px">${home.nome.split(' ')[0]}: ${formHTML(home.id)}</span>
+      <span class="muted" style="font-size:11px">${away.nome.split(' ')[0]}: ${formHTML(away.id)}</span></div>
     ${played
       ? `<div class="muted" style="font-size:12px;margin-top:8px">Rodada já disputada.</div><button class="btn big" style="margin-top:8px" onclick="afterMatch()">Avançar para a próxima rodada ▸</button>`
       : cupNow
@@ -848,10 +866,16 @@ function renderHub(){
     <div style="font-weight:700;margin-top:2px">${G.transferOffers.length} proposta(s) pelos seus jogadores</div></div>
     <button class="btn amber" onclick="go('mercado')">Ver no mercado ▸</button></div></div>`:'';
   const wageBill=G.teams[G.myId].squad.reduce((s,p)=>s+(p.wage||0),0);
+  const news=headlineFor();
+  const newsCard=news?`<div class="card" style="border-left:3px solid var(--grass)">
+    <div class="eyebrow" style="margin-bottom:4px">📰 Gazeta CelfootBahia</div>
+    <div style="font-family:var(--disp);font-size:19px;font-weight:800;line-height:1.2">${news.title}</div>
+    <div class="muted" style="font-size:12px;margin-top:3px">${news.sub}</div></div>`:'';
   document.getElementById('screen-hub').innerHTML=`
    <div class="grid g-hub"><div>
      <div class="card"><div class="eyebrow">Próximo compromisso</div>
        <div class="section-title" style="margin-bottom:12px">Rodada ${Math.min(G.round+1,myLeague().fixtures.length)}</div>${matchHTML}</div>
+     ${newsCard}
      ${cupAlert}
      ${mktAlert}
      ${offerAlert}
@@ -1156,6 +1180,20 @@ function renderCarreira(){
      ${sumChips}
      <div class="eyebrow" style="margin:6px 0 8px">Linha do tempo</div>
      <div class="scroll" style="max-height:340px">${timeline}</div></div>`;
+  const album=(G.seasonAlbum||[]).slice().reverse();
+  const albumCard=album.length?`<div class="card"><div class="eyebrow" style="margin-bottom:10px">📔 Álbum de temporadas</div>
+     <div class="scroll" style="max-height:300px">${album.map(a=>{
+       if(!a.club)return `<div style="padding:8px 0;border-bottom:1px solid var(--line)">
+         <div style="font-weight:700;font-size:13px">Temporada ${a.season} <span class="muted" style="font-weight:400">· sem clube</span></div>
+         <div class="muted" style="font-size:11px">🏆 Copa: ${a.cupChamp}</div></div>`;
+       const posCls=a.pos===1?'amber':a.pos<=2?'grass':a.pos>=15?'danger':'';
+       return `<div style="padding:8px 0;border-bottom:1px solid var(--line)">
+         <div class="row" style="justify-content:space-between">
+           <div style="font-weight:700;font-size:13px">Temporada ${a.season} · ${a.club}</div>
+           <span class="mono ${posCls}" style="font-size:13px;font-weight:700">${a.pos}º</span></div>
+         <div class="muted" style="font-size:11px">${DIV_NAMES[a.div]} · ${a.pts} pts (${a.v}V ${a.e}E ${a.d}D) · Campeão: ${a.champ} · Copa: ${a.cupChamp}</div>
+         <div class="muted" style="font-size:11px">⚽ Artilheiro da divisão: ${a.artil} · sua reputação ao fim: ${a.rep}</div></div>`;
+     }).join('')}</div></div>`:'';
 
   document.getElementById('screen-carreira').innerHTML=`
    <div class="section-title" style="margin-bottom:12px">Carreira do treinador</div>
@@ -1175,6 +1213,7 @@ function renderCarreira(){
      <div class="card"><div class="eyebrow" style="margin-bottom:10px">Propostas de emprego</div>${offersHint}${offersHTML}</div>
    </div><div>
      ${historyCard}
+     ${albumCard}
    </div></div>`;
 }
 function declineOffer(id){G.offers=G.offers.filter(o=>o.clubId!==id);refreshTop();renderCarreira();}
@@ -1570,10 +1609,35 @@ function makeBuyOffer(pid,fromId,valor){
 function promptBuyOffer(pid,fromId){
   const from=G.teams[fromId];const p=from&&from.squad.find(x=>x.id===pid);if(!p)return;
   const clause=releaseClause(p);
-  let v=null;
-  try{const raw=prompt(`Proposta por ${p.nome} (multa: ${money(clause)}).\nOfereça um valor em milhões de didim:`,(Math.round(clause*0.7)/1e6).toFixed(1));
-    if(raw==null)return;v=parseFloat(String(raw).replace(',','.'));}catch(e){return;}
+  const old=document.getElementById('negModal');if(old&&old.remove)old.remove();
+  const div=document.createElement('div');div.className='modal';div.id='negModal';
+  const sug=v=>Math.round(clause*v/1e6*10)/10;
+  div.innerHTML=`<div class="modalcard" style="max-width:440px">
+    <div class="row" style="justify-content:space-between;margin-bottom:10px">
+      <div><div class="section-title" style="font-size:18px">Proposta por ${p.nome}</div>
+      <div class="muted" style="font-size:12px">${p.grupo} · OVR ${p.ovr} · ${p.idade}a · ${from.nome}</div></div>
+      <button class="btn ghost" style="padding:6px 10px" onclick="closeNegModal()">✕</button></div>
+    <div class="row" style="justify-content:space-between;margin-bottom:10px">
+      <div class="kpi"><span class="k">Multa rescisória</span><span class="v amber">${money(clause)}</span></div>
+      <div class="kpi"><span class="k">Caixa disponível</span><span class="v">${money(availableCash())}</span></div></div>
+    <div class="eyebrow" style="margin-bottom:6px">Sua oferta (milhões de didim)</div>
+    <div class="row" style="gap:8px;margin-bottom:10px">
+      <input id="negValue" type="number" step="0.5" min="0" value="${sug(0.7)}" style="flex:1;background:rgba(10,16,28,.8);border:1px solid var(--line-hi);border-radius:10px;color:var(--text);padding:10px 12px;font-family:var(--mono);font-size:16px">
+      <span class="muted" style="font-size:12px">mi</span></div>
+    <div class="seltabs" style="margin-bottom:12px">
+      <button onclick="document.getElementById('negValue').value=${sug(0.5)}">50% (${sug(0.5)} mi)</button>
+      <button onclick="document.getElementById('negValue').value=${sug(0.7)}">70% (${sug(0.7)} mi)</button>
+      <button onclick="document.getElementById('negValue').value=${sug(0.85)}">85% (${sug(0.85)} mi)</button></div>
+    <div class="muted" style="font-size:11px;margin-bottom:12px">O valor fica reservado do caixa. O clube responde em até 2 rodadas — quanto mais perto da multa, maior a chance de aceite. Oferta ≥ multa fecha na hora.</div>
+    <button class="btn big" style="width:100%" onclick="confirmNegModal(${pid},${fromId})">Enviar proposta ▸</button></div>`;
+  document.body.appendChild(div);
+}
+function closeNegModal(){const d=document.getElementById('negModal');if(d&&d.remove)d.remove();}
+function confirmNegModal(pid,fromId){
+  const inp=document.getElementById('negValue');
+  const v=parseFloat(String(inp&&inp.value||'').replace(',','.'));
   if(!v||v<=0)return toast("Valor inválido.");
+  closeNegModal();
   makeBuyOffer(pid,fromId,Math.round(v*1e6));
 }
 function acceptCounter(pid){           // aceitar a contraproposta do clube
@@ -1638,12 +1702,65 @@ function preMatch(){
   if(nm&&nm.hg!=null){toast('Você já disputou esta rodada — avançando.');afterMatch();return;}
   if(G.lineup.starters.length!==11)repairLineup(G.teams[G.myId]);
   go('escala');
+  const oppId=nm?(nm.home===G.myId?nm.away:nm.home):null;
+  const formRow=oppId!=null?`<div class="row" style="gap:14px;margin-top:8px;flex-wrap:wrap">
+      <span class="muted" style="font-size:12px">Sua forma: ${formHTML(G.myId)}</span>
+      <span class="muted" style="font-size:12px">${G.teams[oppId].nome}: ${formHTML(oppId)}</span>
+      ${h2hHTML(G.myId,oppId)}</div>`:'';
   const bar=document.createElement('div');bar.className='card';bar.style.marginTop='14px';
   bar.innerHTML=`<div class="row" style="justify-content:space-between">
     <div><div style="font-weight:700">Escalação confirmada?</div>
     <div class="muted" style="font-size:12px">Você poderá fazer até 5 substituições durante a partida.</div></div>
-    <button class="btn big" style="width:auto" onclick="launchMatch()">▸ Iniciar partida</button></div>`;
+    <button class="btn big" style="width:auto" onclick="launchMatch()">▸ Iniciar partida</button></div>${formRow}`;
   document.getElementById('screen-escala').appendChild(bar);
+}
+function formOf(teamId,n){
+  // últimos n resultados do time na liga desta temporada (mais recente primeiro)
+  n=n||5;const t=G.teams[teamId];if(!t||!G.leagues[t.div])return[];
+  const res=[];
+  const fx=G.leagues[t.div].fixtures;
+  for(let r=Math.min(G.round,fx.length-1);r>=0&&res.length<n;r--){
+    const m=fx[r]&&fx[r].find(m=>m.home===teamId||m.away===teamId);
+    if(!m||m.hg==null)continue;
+    const gf=m.home===teamId?m.hg:m.ag,ga=m.home===teamId?m.ag:m.hg;
+    res.push(gf>ga?'V':gf<ga?'D':'E');
+  }
+  return res;
+}
+function formHTML(teamId){
+  const f=formOf(teamId,5);
+  if(!f.length)return '<span class="muted" style="font-size:11px">sem jogos</span>';
+  return f.map(r=>`<span class="fbadge ${r}">${r}</span>`).join('');
+}
+function h2hHTML(a,b){
+  // confronto direto na temporada (ida/volta na liga)
+  const t=G.teams[a];if(!t||!G.leagues[t.div])return'';
+  const games=[];
+  G.leagues[t.div].fixtures.forEach(rd=>rd.forEach(m=>{
+    if(m.hg==null)return;
+    if((m.home===a&&m.away===b)||(m.home===b&&m.away===a))games.push(m);}));
+  if(!games.length)return'';
+  const txt=games.map(m=>`${G.teams[m.home].nome.split(' ')[0]} ${m.hg}×${m.ag} ${G.teams[m.away].nome.split(' ')[0]}`).join(' · ');
+  return `<span class="muted" style="font-size:12px">Confronto: ${txt}</span>`;
+}
+function headlineFor(){
+  // manchete gerada a partir do último resultado do usuário (determinística por rodada)
+  if(!G.employed||G.myId==null)return null;
+  const last=(G.history||[]).slice().reverse().find(h=>h.home===G.myId||h.away===G.myId);
+  if(!last)return null;
+  const my=G.teams[G.myId],meHome=last.home===G.myId;
+  const opp=G.teams[meHome?last.away:last.home];
+  const gf=meHome?last.hg:last.ag,ga=meHome?last.ag:last.hg;
+  const tb=sortedTable(G.div),pos=tb.findIndex(r=>r.id===G.myId)+1,N=tb.length;
+  const posTxt=pos===1?'e segue na liderança':pos<=4?`e é ${pos}º na tabela`:pos>=N-1?`e afunda na zona da degola (${pos}º)`:`(${pos}º na tabela)`;
+  const pk=arr=>arr[(G.round+G.season)%arr.length];
+  let title,sub;
+  if(gf>ga&&gf-ga>=3){title=pk([`${my.nome} atropela o ${opp.nome}!`,`Show de bola: ${my.nome} goleia!`,`${my.nome} passeia em campo!`]);sub=`Vitória por ${gf} a ${ga} ${posTxt}.`;}
+  else if(gf>ga){title=pk([`${my.nome} vence e convence`,`Três pontos na conta do ${my.nome}`,`${my.nome} faz o dever de casa`]);sub=`${gf} a ${ga} sobre o ${opp.nome} ${posTxt}.`;}
+  else if(gf===ga){title=pk([`${my.nome} tropeça no ${opp.nome}`,`Empate com gosto de pouco`,`Igualdade no apito final`]);sub=`${gf} a ${ga} com o ${opp.nome} ${posTxt}.`;}
+  else if(ga-gf>=3){title=pk([`Vexame! ${my.nome} é massacrado`,`Noite para esquecer do ${my.nome}`]);sub=`Derrota dura por ${ga} a ${gf} para o ${opp.nome} ${posTxt}. A torcida cobra resposta.`;}
+  else{title=pk([`${my.nome} sai derrotado`,`${opp.nome} leva a melhor sobre o ${my.nome}`]);sub=`${ga} a ${gf} ${posTxt}.`;}
+  return {title,sub};
 }
 const SPEED_MS={1:300,2:150,3:80};
 function launchMatch(){
@@ -1666,6 +1783,7 @@ function launchMatch(){
     mom:0,shots:{home:0,away:0},yellow:new Set(),yc:{home:0,away:0},rc:{home:0,away:0},injuryPending:null,
     subsUsed:0,speed:2,timer:null,paused:false,done:false,half:1,subMode:false,subSel:null,posture:'eq',formation:G.lineup.formation};
   MATCH.xiIds=eff.starters.slice();
+  MATCH.ratings={};eff.starters.forEach(id=>MATCH.ratings[id]=6.0);
   MATCH.roundData=precomputeLiveRound();MATCH.scoreDiv=G.div;
   go('partida');document.querySelectorAll('#nav button').forEach(b=>b.classList.remove('active'));
   renderMatch();resumeMatch();
@@ -1713,6 +1831,10 @@ function assistFrom(players,scorer){
   const w=[];cand.forEach(p=>{const n=p.grupo==='MEI'?4:p.grupo==='ATA'?2:1;for(let i=0;i<n;i++)w.push(p);});
   return pick(w.length?w:cand);
 }
+function rate(p,delta){                             // nota de partida (só jogadores do usuário)
+  if(!MATCH||!MATCH.ratings||!p||p.teamId!==G.myId)return;
+  MATCH.ratings[p.id]=clamp((MATCH.ratings[p.id]==null?6.0:MATCH.ratings[p.id])+delta,3,10);
+}
 function creditGoal(p){if(!p)return;p.goals=(p.goals||0)+1;p.careerGoals=(p.careerGoals||0)+1;}
 function creditAssist(p){if(!p)return;p.assists=(p.assists||0)+1;p.careerAssists=(p.careerAssists||0)+1;}
 function scorerFor(side){return weightedScorer(sidePlayers(side));}
@@ -1755,13 +1877,14 @@ function tryChance(side,prob,atk,def){
     const sc=scorerFor(side),tname=G.teams[side==='home'?M.home:M.away].nome;
     if(Math.random()<goalProb){
       if(side==='home')M.hg++;else M.ag++;
-      if(M.comp&&M.comp.type==='league'&&sc){creditGoal(sc);
-        const as=assistFrom(sidePlayers(side),sc);if(as)creditAssist(as);}   // artilharia + assistências (só liga)
-      else if(M.comp&&M.comp.type==='cup'&&sc){sc.cupGoals=(sc.cupGoals||0)+1;sc.careerGoals=(sc.careerGoals||0)+1;}
+      if(M.comp&&M.comp.type==='league'&&sc){creditGoal(sc);rate(sc,1.0);
+        const as=assistFrom(sidePlayers(side),sc);if(as){creditAssist(as);rate(as,0.5);}}   // artilharia + assistências (só liga)
+      else if(M.comp&&M.comp.type==='cup'&&sc){sc.cupGoals=(sc.cupGoals||0)+1;sc.careerGoals=(sc.careerGoals||0)+1;rate(sc,1.0);}
       M.mom=clamp(M.mom+(side==='home'?0.9:-0.9),-3,3);
       pushEvent(M.minute,'⚽',pick(CMT_GOAL)(sc.nome)+` — ${tname}`,true);
     }else{
       const r=Math.random();
+      rate(sc,0.05);                              // participar de chance conta um pouco
       if(r<0.45)pushEvent(M.minute,'🧤',pick(CMT_SAVE)(sc.nome),false,'save');
       else pushEvent(M.minute,'●',pick(CMT_MISS)(sc.nome),false);
     }
@@ -1777,7 +1900,7 @@ function matchIncident(){
     if(rr<0.007){sendOff(hk,pl,'falta violenta');pl.susp=2;if(isUserSide(hk))toast(pl.nome+' pega 2 jogos de suspensão.');}
     else if(rr<0.30){
       if(M.yellow.has(pl.id)){sendOff(hk,pl,'segundo amarelo');pl.susp=Math.max(pl.susp||0,1);}
-      else{M.yellow.add(pl.id);M.yc[hk]++;pl.yc=(pl.yc||0)+1;
+      else{M.yellow.add(pl.id);M.yc[hk]++;pl.yc=(pl.yc||0)+1;rate(pl,-0.5);
         pushEvent(M.minute,'🟨',`Amarelo para ${pl.nome} (${teamNameHK(hk)}).`,false,'card');
         if(pl.yc>=3){pl.pendingSusp=true;pushEvent(M.minute,'🟨',`${pl.nome} atinge 3 amarelos e cumprirá suspensão automática.`,false,'card');}}
     }else pushEvent(M.minute,'•',pick(CMT_FOUL)(pl.nome,teamNameHK(hk)),false);
@@ -1786,7 +1909,7 @@ function matchIncident(){
   }
 }
 function sendOff(hk,pl,reason){
-  const M=MATCH;removeFromField(hk,pl);M.rc[hk]++;
+  const M=MATCH;removeFromField(hk,pl);M.rc[hk]++;rate(pl,-1.5);
   M.mom=clamp(M.mom+(hk==='home'?-1.0:1.0),-3,3);
   pushEvent(M.minute,'🟥',`VERMELHO! ${pl.nome} (${teamNameHK(hk)}) — ${reason}. ${teamNameHK(hk)} com ${ofSide(hk).length} em campo.`,false,'red');
   if(isUserSide(hk))toast('Cartão vermelho! Você ficou com um a menos.');
@@ -1813,6 +1936,12 @@ function pushEvent(min,mark,text,goal,kind){
   const tk=document.getElementById('mTicker');
   if(tk){const d=document.createElement('div'),o=evClassHTML(e);d.className=o.cls;d.innerHTML=o.inner;
     tk.appendChild(d);tk.scrollTop=tk.scrollHeight;}
+  if(goal){                                       // drama: placar pulsa e o painel pisca
+    const sc=document.getElementById('mScore');
+    if(sc&&sc.classList){sc.classList.remove('goalpop');void sc.offsetWidth;sc.classList.add('goalpop');}
+    const bd=document.querySelector&&document.querySelector('.board');
+    if(bd&&bd.classList){bd.classList.remove('goalflash');void bd.offsetWidth;bd.classList.add('goalflash');}
+  }
   if(goal){const sc=document.getElementById('mScore');
     if(sc){sc.classList.remove('gpulse');void sc.offsetWidth;sc.classList.add('gpulse');}}
 }
@@ -1826,6 +1955,8 @@ function renderMatch(){
      <div class="side away">${badgeHTML(away,44)}<div><div class="tname">${away.nome}</div><div class="tsub">${M.away===G.myId?'você · visitante':'visitante'}</div></div></div>
    </div>
    <div class="venue">🏟 ${home.stadium||teamStadium(home.nome)} · casa do ${home.nome}</div>
+   <div class="mombar"><i id="mMom"></i></div>
+   <div class="momlbl"><span>◂ pressão ${home.nome.split(' ')[0].toUpperCase()}</span><span>pressão ${away.nome.split(' ')[0].toUpperCase()} ▸</span></div>
    <div class="controls">${spd}
      <button class="spd" onclick="goInstant()">⏭ Instantâneo</button>
      <button class="spd" id="mPause" onclick="togglePause()">⏸ Pausar</button>
@@ -1837,7 +1968,15 @@ function renderMatch(){
 }
 function updateBoard(){
   const M=MATCH;const sc=document.getElementById('mScore');if(sc)sc.textContent=`${M.hg} : ${M.ag}`;
-  const cl=document.getElementById('mClock');if(cl)cl.textContent=String(Math.min(M.minute,90)).padStart(2,'0')+"'";
+  const cl=document.getElementById('mClock');
+  if(cl){cl.textContent=String(Math.min(M.minute,90)).padStart(2,'0')+"'";
+    const tense=!M.done&&M.minute>=78&&Math.abs(M.hg-M.ag)<=1;
+    cl.classList.toggle('tense',tense);}
+  const mo=document.getElementById('mMom');
+  if(mo){const v=clamp(M.mom/3,-1,1);          // positivo = pressão do MANDANTE (cresce p/ esquerda)
+    const half=Math.abs(v)*50;
+    if(v>=0){mo.style.right='50%';mo.style.left=(50-half)+'%';mo.style.background='linear-gradient(270deg,rgba(43,217,127,.25),var(--grass))';}
+    else{mo.style.left='50%';mo.style.right=(50-half)+'%';mo.style.background='linear-gradient(90deg,rgba(43,217,127,.25),var(--grass))';}}
   const st=document.getElementById('mStatus');
   if(st)st.textContent=M.done?'ENCERRADO':M.paused?(M.minute>=45&&M.minute<46?'INTERVALO':'PAUSADO'):M.minute<45?'1º TEMPO':'2º TEMPO';
   const sb=document.getElementById('mSub');if(sb)sb.textContent=`⚙ Trocas / Tática (${M.subsUsed}/5)`;
@@ -1890,8 +2029,12 @@ function openSubs(isHalftime){
      <div class="muted" style="font-size:12px;margin-top:8px">${inj?'Numa lesão você pode repor com qualquer reserva.':selHint}</div>
      ${tactic}</div>`;
 }
-function subRow(p,where){return `<div class="prow ${(MATCH.subSel&&MATCH.subSel.id===p.id)?'sel':''}" onclick="subClick(${p.id},'${where}')">
-  <span class="pos ${p.grupo}">${p.grupo}</span><span class="pname">${p.nome}</span><span class="ovr ${ovrClass(p.ovr)}">${p.ovr}</span></div>`;}
+function subRow(p,where){
+  const r=(MATCH&&MATCH.ratings&&MATCH.ratings[p.id]!=null)?MATCH.ratings[p.id]:null;
+  const rc=r==null?'':r>=7?'grass':r<5.5?'danger':'muted';
+  const nota=(where==='field'&&r!=null)?`<span class="rnote ${rc}">${r.toFixed(1)}</span>`:'';
+  return `<div class="prow ${(MATCH.subSel&&MATCH.subSel.id===p.id)?'sel':''}" onclick="subClick(${p.id},'${where}')">
+  <span class="pos ${p.grupo}">${p.grupo}</span><span class="pname">${p.nome}</span>${nota}<span class="ovr ${ovrClass(p.ovr)}">${p.ovr}</span></div>`;}
 function subClick(pid,where){
   const M=MATCH;
   if(M.injuryPending){
@@ -1972,7 +2115,12 @@ function endMatch(){
   const gf=M.home===G.myId?M.hg:M.ag,ga=M.home===G.myId?M.ag:M.hg;
   const meWon=gf>ga,draw=M.hg===M.ag;
   const verd=draw?'Empate':meWon?'Vitória!':'Derrota',col=draw?'muted':meWon?'grass':'danger';
-  const fichaHTML=`<div class="mono muted" style="font-size:12px;margin-top:4px">Finalizações ${M.shots.home}-${M.shots.away} · 🟨 ${M.yc.home}-${M.yc.away} · 🟥 ${M.rc.home}-${M.rc.away}</div>`;
+  let craque='';
+  if(M.ratings){const ids=Object.keys(M.ratings);if(ids.length){
+    const best=ids.reduce((a,b)=>M.ratings[a]>=M.ratings[b]?a:b);
+    const bp=G.teams[G.myId]&&G.teams[G.myId].squad.find(p=>p.id===+best);
+    if(bp)craque=` · ⭐ Craque: ${bp.nome.split(' ').slice(-1)[0]} (${M.ratings[best].toFixed(1)})`;}}
+  const fichaHTML=`<div class="mono muted" style="font-size:12px;margin-top:4px">Finalizações ${M.shots.home}-${M.shots.away} · 🟨 ${M.yc.home}-${M.yc.away} · 🟥 ${M.rc.home}-${M.rc.away}${craque}</div>`;
   if(M.comp&&M.comp.type==='cup'){
     const tie=M.comp.tie,leg=M.comp.leg;
     tie['leg'+leg]={hg:M.hg,ag:M.ag};
@@ -2273,6 +2421,7 @@ function launchCupLeg(tie,leg){
     mom:0,shots:{home:0,away:0},yellow:new Set(),yc:{home:0,away:0},rc:{home:0,away:0},injuryPending:null,
     subsUsed:0,speed:2,timer:null,paused:false,done:false,half:1,subMode:false,subSel:null,posture:'eq',formation:G.lineup.formation};
   MATCH.xiIds=eff.starters.slice();
+  MATCH.ratings={};eff.starters.forEach(id=>MATCH.ratings[id]=6.0);
   MATCH.roundData=null;MATCH.scoreDiv=null;
   go('partida');document.querySelectorAll('#nav button').forEach(b=>b.classList.remove('active'));
   renderMatch();resumeMatch();
@@ -2543,10 +2692,32 @@ function allTimeRanking(key,limit){
   (G.legends||[]).forEach(l=>arr.push({nome:l.nome,goals:l.goals,assists:l.assists,club:l.club,active:false}));
   return arr.sort((a,b)=>(key==='goals'?b.goals-a.goals:b.assists-a.assists)||(b.goals+b.assists)-(a.goals+a.assists)).slice(0,limit);
 }
+function captureSeasonAlbum(){
+  // registro permanente da temporada encerrada (para o Álbum, na aba Carreira)
+  if(!Array.isArray(G.seasonAlbum))G.seasonAlbum=[];
+  try{
+    const cupCh=G.cup&&G.cup.championId!=null?G.teams[G.cup.championId].nome:'—';
+    let entry={season:G.season,cupChamp:cupCh};
+    if(G.employed&&G.myId!=null&&G.teams[G.myId].active!==false){
+      const div=G.div,tb=sortedTable(div);
+      const pos=tb.findIndex(r=>r.id===G.myId)+1;
+      const row=tb.find(r=>r.id===G.myId)||{};
+      const ts=topScorers(div,1)[0];
+      entry=Object.assign(entry,{club:G.teams[G.myId].nome,div,pos,
+        pts:row.Pts||0,v:row.W||0,e:row.D||0,d:row.L||0,
+        champ:G.teams[tb[0].id].nome,
+        artil:ts?`${ts.p.nome.split(' ').slice(-1)[0]} (${ts.p.goals})`:'—',
+        rep:Math.round(G.manager.reputation)});
+    }else{entry.club=null;}
+    G.seasonAlbum.push(entry);
+    if(G.seasonAlbum.length>60)G.seasonAlbum.splice(0,G.seasonAlbum.length-60);
+  }catch(e){}
+}
 function nextSeason(){
   if(!G.cup.done){toast('Finalize a Copa antes de iniciar a próxima temporada.');go('copa');return;}
   // demissão de fim de temporada: reputação no limite após a campanha
   if(G.employed&&G.myId!=null&&G.teams[G.myId].active!==false&&G.manager.reputation<=FIRE_REP){getFired();return;}
+  captureSeasonAlbum();
   computePromotions();
   // clube do usuário rebaixado para fora da 5ª divisão → clube dissolvido, treinador fica livre
   let dissolved=false;
@@ -2604,6 +2775,7 @@ function migrateSave(g){
   if(g.seasonGate==null)g.seasonGate=0;if(g.seasonReview===undefined)g.seasonReview=null;
   if(!Array.isArray(g.buyOffers))g.buyOffers=[];
   if(g.lastEmployedDiv===undefined)g.lastEmployedDiv=(g.employed&&g.myId!=null&&g.teams[g.myId])?g.teams[g.myId].div:(g.viewDiv!=null?g.viewDiv:4);
+  if(!Array.isArray(g.seasonAlbum))g.seasonAlbum=[];
   if(g.repResetOnHire===undefined){                 // save no meio de uma demissão: honra o reinício ao ser recontratado
     const last=(g.careerLog||[]).slice(-1)[0];
     g.repResetOnHire=(!g.employed&&last&&last.type==='fired');
