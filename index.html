@@ -382,6 +382,7 @@ input[type=text]:focus{outline:none;border-color:var(--grass);box-shadow:0 0 0 3
     <div id="screen-copa" class="hidden"></div>
     <div id="screen-premiacao" class="hidden"></div>
     <div id="screen-partida" class="hidden"></div>
+    <div id="screen-mundial" class="hidden"></div>
   </div>
 </div>
 
@@ -643,6 +644,8 @@ function myLeague(){return G.leagues[G.div];}
 function sortedTable(div){return Object.values(Lg(div).table).sort(tableCmp);}
 
 function xiPower(players){
+  players=(players||[]).filter(Boolean);          // ignora vagas/jogadores inexistentes
+  if(!players.length)return {atk:55,def:55,all:55};
   const by=g=>players.filter(p=>p.grupo===g);
   const avg=a=>a.length?a.reduce((s,p)=>s+p.ovr,0)/a.length:55;
   const gk=avg(by("GOL")),df=avg(by("DEF")),mf=avg(by("MEI")),at=avg(by("ATA")),all=avg(players);
@@ -657,18 +660,21 @@ function effectiveLineup(team,L){
   const availReserves=()=>team.squad
     .filter(p=>playerAvailable(p)&&!used.has(p.id))
     .sort((a,b)=>b.ovr-a.ovr);
-  // titulares: mantém quem está apto; para os inaptos, busca reserva apto (mesma posição de preferência)
+  // titulares: mantém quem está apto; para os inaptos/inexistentes, busca reserva apto (mesma posição de preferência)
   const starters=[];
   (L.starters||[]).forEach(id=>{
-    const p=byId(id);if(!p){return;}
-    if(playerAvailable(p)){used.add(p.id);starters.push(p.id);return;}
+    const p=byId(id);
+    if(p&&playerAvailable(p)){used.add(p.id);starters.push(p.id);return;}
+    const grp=p?p.grupo:null;                                  // se o titular sumiu do elenco, repõe por qualquer apto
     const benchFirst=(L.bench||[]).map(byId).filter(x=>x&&playerAvailable(x)&&!used.has(x.id));
-    const cand=benchFirst.find(x=>x.grupo===p.grupo)
-      ||availReserves().find(x=>x.grupo===p.grupo)
+    const cand=(grp&&benchFirst.find(x=>x.grupo===grp))
+      ||(grp&&availReserves().find(x=>x.grupo===grp))
       ||benchFirst[0]||availReserves()[0];
-    if(cand){used.add(cand.id);starters.push(cand.id);}       // entra no lugar do inapto
-    else{used.add(p.id);starters.push(p.id);}                 // sem reserva apto: mantém (time desfalcado)
+    if(cand){used.add(cand.id);starters.push(cand.id);}        // entra no lugar do inapto/ausente
+    else if(p){used.add(p.id);starters.push(p.id);}            // sem reserva apto: mantém (time desfalcado)
   });
+  // garante 11 titulares válidos mesmo após vendas (evita jogador inexistente na escalação)
+  while(starters.length<11){const rep=availReserves()[0];if(!rep)break;used.add(rep.id);starters.push(rep.id);}
   // banco: mantém reservas aptos; substitui inaptos por outros reservas aptos
   const bench=[];
   (L.bench||[]).forEach(id=>{
@@ -734,7 +740,7 @@ function startGame(teamId){
     manager:{name:coach,reputation:clamp(my.prestige-8,22,82)},
     season:1,round:0,leagues:null,offers:[],history:[],finished:false,viewDiv:my.div,
     lineup:autoLineup(my,"4-3-3"),lastPos:null,lastPrize:0,lastChamp:false,champions:[],
-    cup:null,leaguePodium:[],lastLeagueEarn:0,transferOffers:[],lastWages:0,legends:[],morale:60,lastTV:0,lastGate:0,careerLog:[],seasonGate:0,seasonReview:null,buyOffers:[],lastEmployedDiv:null,repResetOnHire:false,justFired:false,seasonAlbum:[]};
+    cup:null,leaguePodium:[],lastLeagueEarn:0,transferOffers:[],lastWages:0,legends:[],morale:60,lastTV:0,lastGate:0,careerLog:[],seasonGate:0,seasonReview:null,buyOffers:[],lastEmployedDiv:null,repResetOnHire:false,justFired:false,seasonAlbum:[],worldQual:[],mundial:null,mundialHistory:[]};
   G.didim=budgets[teamId];
   logCareer('job',`${coach} assume o ${my.nome} (${DIV_NAMES[my.div]}) — início da carreira`);
   buildLeagues();buildCup();
@@ -761,10 +767,13 @@ function buildNav(){
 }
 let CUR='hub';
 function go(s){
-  if(MATCH && s!=='partida' && !MATCH.done){toast("Termine a partida primeiro.");return;}
+  if(MATCH && s!=='partida' && !MATCH.done){
+    if(!MATCH.timer && (MATCH.minute||0)===0 && !MATCH.paused){MATCH=null;}   // partida-resquício que nunca começou: descarta
+    else{toast("Termine a partida primeiro.");return;}
+  }
   if(!G.employed && (s==='elenco'||s==='escala'||s==='mercado')){toast("Você não tem clube no momento.");return;}
   CUR=s;
-  ["hub","elenco","escala","mercado","tabela","jogos","copa","premiacao","carreira","partida"].forEach(id=>
+  ["hub","elenco","escala","mercado","tabela","jogos","copa","premiacao","carreira","partida","mundial"].forEach(id=>
     document.getElementById('screen-'+id).classList.toggle('hidden',id!==s));
   const scr=document.getElementById('screen-'+s);
   if(scr){scr.classList.remove('screen-in');void scr.offsetWidth;scr.classList.add('screen-in');}
@@ -773,6 +782,7 @@ function go(s){
   if(s==='elenco')renderElenco();
   if(s==='escala')renderEscala();
   if(s==='mercado')renderMercado();
+  if(s==='mundial')renderMundial();
   if(s==='tabela')renderTabela();
   if(s==='jogos')renderJogos();
   if(s==='copa')renderCopa();
@@ -867,6 +877,10 @@ function renderHub(){
     <button class="btn amber" onclick="go('mercado')">Ver no mercado ▸</button></div></div>`:'';
   const wageBill=G.teams[G.myId].squad.reduce((s,p)=>s+(p.wage||0),0);
   const news=headlineFor();
+  const mundialCard=(G.mundial&&G.mundial.active)?`<div class="card" style="border-color:var(--amber)">
+    <div class="row" style="justify-content:space-between"><div><div class="eyebrow amber">🌍 Copa Mundial de Clubes em andamento</div>
+    <div style="font-weight:700;margin-top:2px">O torneio dos melhores precisa ser disputado antes da liga</div></div>
+    <button class="btn amber" onclick="go('mundial')">Ir para o Mundial ▸</button></div></div>`:'';
   const newsCard=news?`<div class="card" style="border-left:3px solid var(--grass)">
     <div class="eyebrow" style="margin-bottom:4px">📰 Gazeta CelfootBahia</div>
     <div style="font-family:var(--disp);font-size:19px;font-weight:800;line-height:1.2">${news.title}</div>
@@ -875,6 +889,7 @@ function renderHub(){
    <div class="grid g-hub"><div>
      <div class="card"><div class="eyebrow">Próximo compromisso</div>
        <div class="section-title" style="margin-bottom:12px">Rodada ${Math.min(G.round+1,myLeague().fixtures.length)}</div>${matchHTML}</div>
+     ${mundialCard}
      ${newsCard}
      ${cupAlert}
      ${mktAlert}
@@ -1047,7 +1062,9 @@ function divSelector(cb){
   return `<div class="seltabs">${DIV_NAMES.map((d,i)=>
     `<button class="${G.viewDiv===i?'active':''}" onclick="${cb}(${i})">${d}</button>`).join('')}</div>`;
 }
-function setViewTabela(d){G.viewDiv=d;renderTabela();}
+let TABELA_VIEW='liga';
+function setTabelaView(v){TABELA_VIEW=v;renderTabela();}
+function setViewTabela(d){G.viewDiv=d;TABELA_VIEW='liga';renderTabela();}
 function setViewJogos(d){G.viewDiv=d;renderJogos();}
 function topScorers(div,limit=10){
   const ids=new Set(Lg(div).teamIds);const list=[];
@@ -1078,7 +1095,23 @@ function allTimeTable(key,label){
   return `<div class="card"><table><thead><tr><th class="num"></th><th>Jogador</th><th>Clube</th><th class="num">${label}</th></tr></thead><tbody>${body}</tbody></table></div>`;
 }
 function renderTabela(){
+  const hasMundial=!!G.mundial;
+  if(hasMundial&&TABELA_VIEW==='mundial'){
+    document.getElementById('screen-tabela').innerHTML=`
+      <div class="section-title" style="margin-bottom:12px">Classificação</div>
+      <div class="seltabs" style="margin-bottom:14px">
+        <button onclick="setTabelaView('liga')">Ligas</button>
+        <button class="active" onclick="setTabelaView('mundial')">🌍 Mundial</button></div>
+      <div class="section-title" style="margin-bottom:6px">🌍 Copa Mundial de Clubes${G.mundial.active?'':' · encerrado'}</div>
+      <div class="muted" style="font-size:12px;margin-bottom:12px">Temporada ${G.mundial.season}${G.mundial.active?' · em andamento — as ligas estão paradas':''}</div>
+      ${mundialStandingsHTML()}
+      ${G.mundial.active?'<button class="btn big" style="margin-top:14px" onclick="go(\'mundial\')">Ir para o Mundial ▸</button>':''}`;
+    return;
+  }
   const d=G.viewDiv;const rows=sortedTable(d);
+  const mundialTab=hasMundial?`<div class="seltabs" style="margin-bottom:14px">
+    <button class="active" onclick="setTabelaView('liga')">Ligas</button>
+    <button onclick="setTabelaView('mundial')">🌍 Mundial</button></div>`:'';
   const body=rows.map((r,i)=>{const t=G.teams[r.id];
     const zone=i<2&&d>0?'zone-up':(i>=rows.length-2?'zone-down':'');
     const me=r.id===G.myId?'me':'';
@@ -1089,6 +1122,7 @@ function renderTabela(){
       <td class="num" style="font-weight:700">${r.Pts}</td></tr>`;}).join('');
   document.getElementById('screen-tabela').innerHTML=`
    <div class="section-title" style="margin-bottom:12px">Classificação</div>
+   ${mundialTab}
    ${divSelector('setViewTabela')}
    <div class="card"><table><thead><tr><th></th><th>Clube</th><th class="num">J</th><th class="num">V</th><th class="num">E</th>
      <th class="num">D</th><th class="num">GP</th><th class="num">GC</th><th class="num">SG</th><th class="num">P</th></tr></thead>
@@ -1382,8 +1416,12 @@ function generateOffers(){
 /* ===================== MERCADO ===================== */
 let MKT={tab:'comprar',filter:'ALL',list:null,maxPrice:null,minOvr:0,age:'ALL',club:'ALL'};
 function totalRounds(){return G.leagues?G.leagues[0].fixtures.length:30;}
-function windowOpen(){const mid=Math.floor(totalRounds()/2);return G.round<=2 || (G.round>=mid-1&&G.round<=mid+1);}
+function windowOpen(){
+  if(G.mundial&&G.mundial.active)return true;                 // Mundial: janela extra aberta durante o torneio
+  const mid=Math.floor(totalRounds()/2);return G.round<=2 || (G.round>=mid-1&&G.round<=mid+1);
+}
 function windowInfo(){
+  if(G.mundial&&G.mundial.active)return {open:true,txt:'🟢 Janela de transferências ABERTA · Mundial de Clubes'};
   if(windowOpen())return {open:true,txt:'🟢 Janela de transferências ABERTA'};
   const mid=Math.floor(totalRounds()/2);const next=G.round<mid-1?('na '+mid+'ª rodada'):'no início da próxima temporada';
   return {open:false,txt:'🔒 Janela fechada — reabre '+next};
@@ -1696,6 +1734,7 @@ function sellPlayer(pid,offer){
 
 /* ===================== PARTIDA ===================== */
 function preMatch(){
+  if(G.mundial&&G.mundial.active){toast('Dispute o Mundial de Clubes antes de começar a liga.');go('mundial');return;}
   syncCupSchedule();
   if(cupLegDue()){toast('Calendário: você tem jogo da Copa antes desta rodada.');go('copa');return;}
   const nm=nextMatchForMe();
@@ -1764,29 +1803,37 @@ function headlineFor(){
 }
 const SPEED_MS={1:300,2:150,3:80};
 function launchMatch(){
+  if(G.mundial&&G.mundial.active){toast('Dispute o Mundial de Clubes antes de começar a liga.');go('mundial');return;}
   syncCupSchedule();
   if(cupLegDue()){toast('Calendário: jogo da Copa pendente antes desta rodada.');go('copa');return;}
   const nm=nextMatchForMe();if(!nm)return;
   if(nm.hg!=null){toast('Rodada já disputada — avançando.');afterMatch();return;}   // trava rejogar a mesma rodada
-  const sq=G.teams[G.myId].squad;
-  if(G.lineup.starters.length!==11)repairLineup(G.teams[G.myId]);
-  const eff=effectiveLineup(G.teams[G.myId],G.lineup);   // indisponíveis substituídos só nesta partida
-  const swapped=eff.starters.some((id,i)=>id!==G.lineup.starters[i]);
-  if(swapped)toast('Titular suspenso/lesionado substituído automaticamente nesta partida.');
-  const my=G.teams[G.myId],iAmHome=nm.home===G.myId,oppId=iAmHome?nm.away:nm.home;
-  const myStart=eff.starters.map(pById),myBench=eff.bench.map(pById);
-  const opp=G.teams[oppId],oL=autoLineup(opp,pick(Object.keys(FORMATIONS)));
-  const oStart=oL.starters.map(id=>opp.squad.find(p=>p.id===id));
-  MATCH={fx:nm,iAmHome,oppId,home:iAmHome?G.myId:oppId,away:iAmHome?oppId:G.myId,comp:{type:'league'},
-    minute:0,hg:0,ag:0,events:[],onField:{me:myStart.slice(),opp:oStart.slice()},bench:{me:myBench.slice()},
-    myPow0:xiPower(myStart).all,oppPow0:xiPower(oStart).all,
-    mom:0,shots:{home:0,away:0},yellow:new Set(),yc:{home:0,away:0},rc:{home:0,away:0},injuryPending:null,
-    subsUsed:0,speed:2,timer:null,paused:false,done:false,half:1,subMode:false,subSel:null,posture:'eq',formation:G.lineup.formation};
-  MATCH.xiIds=eff.starters.slice();
-  MATCH.ratings={};eff.starters.forEach(id=>MATCH.ratings[id]=6.0);
-  MATCH.roundData=precomputeLiveRound();MATCH.scoreDiv=G.div;
-  go('partida');document.querySelectorAll('#nav button').forEach(b=>b.classList.remove('active'));
-  renderMatch();resumeMatch();
+  try{
+    if(G.lineup.starters.length!==11)repairLineup(G.teams[G.myId]);
+    const eff=effectiveLineup(G.teams[G.myId],G.lineup);   // indisponíveis substituídos só nesta partida
+    const swapped=eff.starters.some((id,i)=>id!==G.lineup.starters[i]);
+    const iAmHome=nm.home===G.myId,oppId=iAmHome?nm.away:nm.home;
+    const myStart=eff.starters.map(pById).filter(Boolean),myBench=eff.bench.map(pById).filter(Boolean);
+    if(myStart.length<7)throw new Error('escalação insuficiente');   // salvaguarda extrema
+    const opp=G.teams[oppId],oL=autoLineup(opp,pick(Object.keys(FORMATIONS)));
+    const oStart=oL.starters.map(id=>opp.squad.find(p=>p.id===id)).filter(Boolean);
+    const m={fx:nm,iAmHome,oppId,home:iAmHome?G.myId:oppId,away:iAmHome?oppId:G.myId,comp:{type:'league'},
+      minute:0,hg:0,ag:0,events:[],onField:{me:myStart.slice(),opp:oStart.slice()},bench:{me:myBench.slice()},
+      myPow0:xiPower(myStart).all,oppPow0:xiPower(oStart).all,
+      mom:0,shots:{home:0,away:0},yellow:new Set(),yc:{home:0,away:0},rc:{home:0,away:0},injuryPending:null,
+      subsUsed:0,speed:2,timer:null,paused:false,done:false,half:1,subMode:false,subSel:null,posture:'eq',formation:G.lineup.formation};
+    m.xiIds=eff.starters.slice();
+    m.ratings={};eff.starters.forEach(id=>m.ratings[id]=6.0);
+    MATCH=m;                                               // só agora o MATCH passa a existir
+    MATCH.roundData=precomputeLiveRound();MATCH.scoreDiv=G.div;
+    if(swapped)toast('Titular suspenso/lesionado substituído automaticamente nesta partida.');
+    go('partida');document.querySelectorAll('#nav button').forEach(b=>b.classList.remove('active'));
+    renderMatch();resumeMatch();
+  }catch(err){
+    MATCH=null;                                           // nunca deixa partida meio-criada travando o jogo
+    repairLineup(G.teams[G.myId]);
+    toast('Não consegui montar a partida. Escalação reajustada — tente iniciar de novo.');
+  }
 }
 function teamOnFieldPower(side){const meIsHome=MATCH.iAmHome;
   const isMe=(side==='home')===meIsHome;
@@ -1945,14 +1992,24 @@ function pushEvent(min,mark,text,goal,kind){
   if(goal){const sc=document.getElementById('mScore');
     if(sc){sc.classList.remove('gpulse');void sc.offsetWidth;sc.classList.add('gpulse');}}
 }
+function matchStandTxt(teamId){
+  // posição do time para exibir na partida; na Copa, inclui a divisão (times de ligas distintas)
+  const t=G.teams[teamId];if(!t)return'';
+  const isCup=MATCH&&MATCH.comp&&MATCH.comp.type==='cup';
+  const tb=sortedTable(t.div);const pos=tb.findIndex(r=>r.id===teamId)+1;
+  if(!pos)return isCup?DIV_NAMES[t.div]:'';
+  const ord=pos+'º';
+  return isCup?`${DIV_NAMES[t.div]} · ${ord}`:ord;
+}
 function renderMatch(){
   const M=MATCH,home=G.teams[M.home],away=G.teams[M.away];
   const spd=[1,2,3].map(s=>`<button class="spd ${M.speed===s?'active':''}" data-spd="${s}" onclick="setSpeed(${s})">${s}x</button>`).join('');
+  const hStand=matchStandTxt(M.home),aStand=matchStandTxt(M.away);
   document.getElementById('screen-partida').innerHTML=`
    <div class="board"><div class="board-top">
-     <div class="side">${badgeHTML(home,44)}<div><div class="tname">${home.nome}</div><div class="tsub">${M.home===G.myId?'você · mando':'mandante'}</div></div></div>
+     <div class="side">${badgeHTML(home,44)}<div><div class="tname">${home.nome}</div><div class="tsub">${M.home===G.myId?'você · mando':'mandante'}${hStand?` · <span class="grass">${hStand}</span>`:''}</div></div></div>
      <div class="center"><div class="status" id="mStatus"></div><div class="score" id="mScore">${M.hg} : ${M.ag}</div><div class="clock" id="mClock">00'</div><div class="mstat" id="mStat"></div></div>
-     <div class="side away">${badgeHTML(away,44)}<div><div class="tname">${away.nome}</div><div class="tsub">${M.away===G.myId?'você · visitante':'visitante'}</div></div></div>
+     <div class="side away">${badgeHTML(away,44)}<div><div class="tname">${away.nome}</div><div class="tsub">${M.away===G.myId?'você · visitante':'visitante'}${aStand?` · <span class="grass">${aStand}</span>`:''}</div></div></div>
    </div>
    <div class="venue">🏟 ${home.stadium||teamStadium(home.nome)} · casa do ${home.nome}</div>
    <div class="mombar"><i id="mMom"></i></div>
@@ -2135,6 +2192,20 @@ function endMatch(){
     document.getElementById('screen-partida').appendChild(panel);
     return;
   }
+  if(M.comp&&M.comp.type==='mundial'){
+    repAfterMatch(gf,ga,M.myPow0,M.oppPow0);
+    updateBoard();closeSubs();refreshTop();
+    const ph=M.comp.phase==='group'?'fase de grupos':({quarter:'quartas',semi:'semifinal',final:'FINAL',third:'disputa de 3º'})[G.mundial.koRound]||'mata-mata';
+    let extra='';
+    if(M.comp.phase==='ko'&&M.hg===M.ag)extra=' · vai para os pênaltis';
+    const panel=document.createElement('div');panel.className='card';panel.style.marginTop='14px';
+    panel.innerHTML=`<div class="row" style="justify-content:space-between">
+      <div><div class="section-title ${col}">${verd} <span class="muted" style="font-size:13px;font-weight:400">· 🌍 Mundial (${ph})</span></div>
+      <div class="muted" style="font-size:13px">${G.teams[M.home].nome} ${M.hg}–${M.ag} ${G.teams[M.away].nome}${extra} · reputação ${Math.round(G.manager.reputation)}</div>${fichaHTML}</div>
+      <button class="btn big" style="width:auto" onclick="afterMundialLive()">Avançar ▸</button></div>`;
+    document.getElementById('screen-partida').appendChild(panel);
+    return;
+  }
   M.fx.hg=M.hg;M.fx.ag=M.ag;
   applyResult(myLeague().table,M.home,M.away,M.hg,M.ag);
   creditGate(M.home);
@@ -2199,7 +2270,7 @@ function simMatchTimeline(homeId,awayId){
   return {gh,ga};
 }
 function precomputeLiveRound(){
-  return G.leagues.map(lg=>({div:lg.div,matches:lg.fixtures[G.round].map(m=>{
+  return G.leagues.map(lg=>({div:lg.div,matches:(lg.fixtures[G.round]||[]).map(m=>{
     if(m===MATCH.fx)return {m,isUser:true};
     const t=simMatchTimeline(m.home,m.away);return {m,isUser:false,gh:t.gh,ga:t.ga};
   })}));
@@ -2409,22 +2480,30 @@ function cupSimAll(){
 function launchCupLeg(tie,leg){
   const home=leg===1?tie.a:tie.b,away=leg===1?tie.b:tie.a;
   const iAmHome=home===G.myId,oppId=iAmHome?away:home;
-  if(G.lineup.starters.length!==11)repairLineup(G.teams[G.myId]);
-  const eff=effectiveLineup(G.teams[G.myId],G.lineup);
-  if(eff.starters.some((id,i)=>id!==G.lineup.starters[i]))toast('Titular suspenso/lesionado substituído automaticamente nesta partida.');
-  const myStart=eff.starters.map(pById),myBench=eff.bench.map(pById);
-  const opp=G.teams[oppId],oL=autoLineup(opp,pick(Object.keys(FORMATIONS)));
-  const oStart=oL.starters.map(id=>opp.squad.find(p=>p.id===id));
-  MATCH={fx:null,iAmHome,oppId,home,away,comp:{type:'cup',tie,leg,single:tie.single},
-    minute:0,hg:0,ag:0,events:[],onField:{me:myStart.slice(),opp:oStart.slice()},bench:{me:myBench.slice()},
-    myPow0:xiPower(myStart).all,oppPow0:xiPower(oStart).all,
-    mom:0,shots:{home:0,away:0},yellow:new Set(),yc:{home:0,away:0},rc:{home:0,away:0},injuryPending:null,
-    subsUsed:0,speed:2,timer:null,paused:false,done:false,half:1,subMode:false,subSel:null,posture:'eq',formation:G.lineup.formation};
-  MATCH.xiIds=eff.starters.slice();
-  MATCH.ratings={};eff.starters.forEach(id=>MATCH.ratings[id]=6.0);
-  MATCH.roundData=null;MATCH.scoreDiv=null;
-  go('partida');document.querySelectorAll('#nav button').forEach(b=>b.classList.remove('active'));
-  renderMatch();resumeMatch();
+  try{
+    if(G.lineup.starters.length!==11)repairLineup(G.teams[G.myId]);
+    const eff=effectiveLineup(G.teams[G.myId],G.lineup);
+    const swapped=eff.starters.some((id,i)=>id!==G.lineup.starters[i]);
+    const myStart=eff.starters.map(pById).filter(Boolean),myBench=eff.bench.map(pById).filter(Boolean);
+    if(myStart.length<7)throw new Error('escalação insuficiente');
+    const opp=G.teams[oppId],oL=autoLineup(opp,pick(Object.keys(FORMATIONS)));
+    const oStart=oL.starters.map(id=>opp.squad.find(p=>p.id===id)).filter(Boolean);
+    const m={fx:null,iAmHome,oppId,home,away,comp:{type:'cup',tie,leg,single:tie.single},
+      minute:0,hg:0,ag:0,events:[],onField:{me:myStart.slice(),opp:oStart.slice()},bench:{me:myBench.slice()},
+      myPow0:xiPower(myStart).all,oppPow0:xiPower(oStart).all,
+      mom:0,shots:{home:0,away:0},yellow:new Set(),yc:{home:0,away:0},rc:{home:0,away:0},injuryPending:null,
+      subsUsed:0,speed:2,timer:null,paused:false,done:false,half:1,subMode:false,subSel:null,posture:'eq',formation:G.lineup.formation};
+    m.xiIds=eff.starters.slice();
+    m.ratings={};eff.starters.forEach(id=>m.ratings[id]=6.0);
+    m.roundData=null;m.scoreDiv=null;
+    MATCH=m;
+    if(swapped)toast('Titular suspenso/lesionado substituído automaticamente nesta partida.');
+    go('partida');document.querySelectorAll('#nav button').forEach(b=>b.classList.remove('active'));
+    renderMatch();resumeMatch();
+  }catch(err){
+    MATCH=null;repairLineup(G.teams[G.myId]);
+    toast('Não consegui montar o jogo da Copa. Escalação reajustada — tente de novo.');go('copa');
+  }
 }
 function afterCupLive(){MATCH=null;cupFinalizeLeg();if(checkDismissal())return;refreshTop();autosave();go('copa');}
 
@@ -2713,11 +2792,293 @@ function captureSeasonAlbum(){
     if(G.seasonAlbum.length>60)G.seasonAlbum.splice(0,G.seasonAlbum.length-60);
   }catch(e){}
 }
+/* ===================== MUNDIAL DE CLUBES (a cada 4 temporadas) ===================== */
+const MUNDIAL_POT={champ:350e6,vice:170e6,semi:85e6,quarter:45e6,group:20e6};   // o torneio mais valioso do mundo
+function recordWorldQual(){
+  if(!Array.isArray(G.worldQual))G.worldQual=[];
+  const d1=sortedTable(0);
+  G.worldQual.push({season:G.season,
+    champ1:d1[0]?d1[0].id:null,vice1:d1[1]?d1[1].id:null,
+    cupChamp:(G.cup&&G.cup.championId!=null)?G.cup.championId:null});
+  if(G.worldQual.length>8)G.worldQual.splice(0,G.worldQual.length-8);
+}
+function mundialQualifiers(){
+  // 4 últimos: campeões da 1ª div, vices da 1ª div, campeões da Copa — 1 vaga por clube; completa até 16
+  const last4=(G.worldQual||[]).slice(-4);
+  const ordered=[];
+  last4.slice().reverse().forEach(w=>{[w.champ1,w.vice1,w.cupChamp].forEach(id=>{if(id!=null)ordered.push(id);});});
+  const picked=[];const seen=new Set();
+  ordered.forEach(id=>{if(!seen.has(id)&&G.teams[id]&&G.teams[id].active!==false){seen.add(id);picked.push(id);}});
+  // completa vagas restantes com os melhores clubes ativos ainda não escolhidos (próximos colocados)
+  if(picked.length<16){
+    const pool=activeTeams().map(t=>t.id).filter(id=>!seen.has(id)).sort((a,b)=>G.teams[b].str-G.teams[a].str);
+    for(const id of pool){if(picked.length>=16)break;seen.add(id);picked.push(id);}
+  }
+  return picked.slice(0,16);
+}
+function maybeStartMundial(){
+  if(G.season%4!==0)return false;                       // a cada 4 temporadas
+  if((G.worldQual||[]).length<4)return false;           // precisa de 4 anos de histórico
+  const teams=mundialQualifiers();
+  if(teams.length<16)return false;
+  // sorteio em 4 potes por força → 4 grupos de 4 equilibrados
+  const seeded=[...teams].sort((a,b)=>G.teams[b].str-G.teams[a].str);
+  const pots=[seeded.slice(0,4),seeded.slice(4,8),seeded.slice(8,12),seeded.slice(12,16)].map(shuffle);
+  const groups=[[],[],[],[]];
+  pots.forEach(pot=>pot.forEach((id,gi)=>groups[gi].push(id)));
+  const groupFix=groups.map(g=>roundRobin(g));          // 3 rodadas, 2 jogos cada
+  G.mundial={active:true,season:G.season,groups,groupFix,
+    table:groups.map(g=>{const t={};g.forEach(id=>t[id]={id,P:0,W:0,D:0,L:0,GF:0,GA:0,Pts:0});return t;}),
+    phase:'group',gr:0,knockout:null,koRound:null,koIdx:0,
+    championId:null,viceId:null,thirdId:null,userOut:false};
+  const meIn=G.employed&&groups.some(g=>g.includes(G.myId));
+  go('mundial');
+  toast(meIn?'🌍 Sua equipe está no Mundial de Clubes!':'🌍 Mundial de Clubes — seu clube não se classificou desta vez.');
+  return true;
+}
+function roundRobin(ids){
+  // round-robin simples de 4 times → 3 rodadas de 2 jogos
+  const a=ids;
+  return [
+    [mkMatch(a[0],a[1]),mkMatch(a[2],a[3])],
+    [mkMatch(a[0],a[2]),mkMatch(a[3],a[1])],
+    [mkMatch(a[0],a[3]),mkMatch(a[1],a[2])],
+  ];
+}
+function mkMatch(h,a){return {home:h,away:a,hg:null,ag:null};}
+function mundialApply(tbl,h,a,hg,ag){
+  const H=tbl[h],A=tbl[a];H.P++;A.P++;H.GF+=hg;H.GA+=ag;A.GF+=ag;A.GA+=hg;
+  if(hg>ag){H.W++;A.L++;H.Pts+=3;}else if(hg<ag){A.W++;H.L++;A.Pts+=3;}else{H.D++;A.D++;H.Pts++;A.Pts++;}
+}
+function mundialGroupSorted(gi){
+  const M=G.mundial;const arr=M.groups[gi].map(id=>M.table[gi][id]);
+  return arr.sort((a,b)=>b.Pts-a.Pts||(b.GF-b.GA)-(a.GF-a.GA)||b.GF-a.GF||G.teams[a.id].nome.localeCompare(G.teams[b.id].nome));
+}
+function mundialUserPendingMatch(){
+  // retorna a próxima partida do usuário na fase atual, se houver
+  const M=G.mundial;if(!M||!M.active)return null;
+  if(M.phase==='group'){
+    for(let gi=0;gi<4;gi++){const round=M.groupFix[gi][M.gr];if(!round)continue;
+      for(const m of round){if(m.hg==null&&(m.home===G.myId||m.away===G.myId))return {type:'group',gi,m};}}
+    return null;
+  }
+  if(M.phase==='ko'){const ties=M.knockout[M.koRound]||[];
+    for(const tie of ties){if(tie&&tie.hg==null&&(tie.home===G.myId||tie.away===G.myId))return {type:'ko',tie};}}
+  return null;
+}
+function mundialSimMatch(m){const r=simMatch(m.home,m.away);
+  // desempate no mata-mata: pênaltis
+  return r;}
+function mundialStep(){
+  // avança o Mundial simulando tudo que não for do usuário, parando quando for a vez dele jogar ao vivo
+  const M=G.mundial;if(!M||!M.active)return;
+  let guard=0;
+  while(guard++<200){
+    const pend=mundialUserPendingMatch();
+    if(pend){                                   // é a vez do usuário: joga ao vivo
+      if(pend.type==='group')launchMundialMatch(pend.m,{type:'mundial',phase:'group',gi:pend.gi});
+      else launchMundialMatch(pend.tie,{type:'mundial',phase:'ko',tie:pend.tie});
+      return;
+    }
+    if(!mundialAdvanceAuto())break;             // simula a próxima pendência da IA; para se acabou a fase
+  }
+  renderMundial();
+}
+function mundialAdvanceAuto(){
+  const M=G.mundial;
+  if(M.phase==='group'){
+    const round=[]; for(let gi=0;gi<4;gi++){const r=M.groupFix[gi][M.gr];if(r)r.forEach(m=>round.push({gi,m}));}
+    const pend=round.find(x=>x.m.hg==null&&x.m.home!==G.myId&&x.m.away!==G.myId);   // não simula o jogo do usuário
+    if(pend){const r=mundialSimMatch(pend.m);pend.m.hg=r.hg;pend.m.ag=r.ag;mundialApply(M.table[pend.gi],pend.m.home,pend.m.away,r.hg,r.ag);return true;}
+    if(round.some(x=>x.m.hg==null))return false;   // falta o jogo do usuário nesta rodada: espera ele jogar
+    if(M.gr<2){M.gr++;return true;}
+    mundialBuildKnockout();return true;
+  }
+  if(M.phase==='ko'){
+    const ties=M.knockout[M.koRound];
+    const pend=ties.find(t=>t.hg==null&&t.home!==G.myId&&t.away!==G.myId);  // IA não simula a chave do usuário
+    if(pend){const r=mundialSimMatch(pend);pend.hg=r.hg;pend.ag=r.ag;mundialResolveTie(pend);return true;}
+    if(ties.some(t=>t.hg==null))return false;    // ainda falta a do usuário: espera ele jogar
+    return mundialAdvanceKoRound();
+  }
+  return false;
+}
+function mundialBuildKnockout(){
+  const M=G.mundial;
+  const q=[];for(let gi=0;gi<4;gi++){const s=mundialGroupSorted(gi);q.push(s[0].id,s[1].id);}
+  // emparelhamento clássico: 1A×2B, 1C×2D, 1B×2A, 1D×2C
+  const [a1,a2,b1,b2,c1,c2,d1,d2]=[q[0],q[1],q[2],q[3],q[4],q[5],q[6],q[7]];
+  M.knockout={quarter:[koTie(a1,b2),koTie(c1,d2),koTie(b1,a2),koTie(d1,c2)],semi:[],final:[],third:[]};
+  M.phase='ko';M.koRound='quarter';M.koIdx=0;
+}
+function koTie(h,a){return {home:h,away:a,hg:null,ag:null,winner:null,loser:null,pens:false};}
+function mundialResolveTie(t){
+  let w,l;
+  if(t.hg>t.ag){w=t.home;l=t.away;}else if(t.ag>t.hg){w=t.away;l=t.home;}
+  else{t.pens=true;                              // pênaltis: leve peso à força
+    const ph=xiPower(bestXIforSim(t.home)).all,pa=xiPower(bestXIforSim(t.away)).all;
+    const homeWins=Math.random()<clamp(0.5+(ph-pa)/60,0.2,0.8);
+    w=homeWins?t.home:t.away;l=homeWins?t.away:t.home;}
+  t.winner=w;t.loser=l;
+}
+function mundialAdvanceKoRound(){
+  const M=G.mundial;
+  if(M.koRound==='quarter'){
+    const q=M.knockout.quarter;
+    M.knockout.semi=[koTie(q[0].winner,q[1].winner),koTie(q[2].winner,q[3].winner)];
+    M.koRound='semi';M.koIdx=0;return true;
+  }
+  if(M.koRound==='semi'){
+    const s=M.knockout.semi;
+    M.knockout.final=[koTie(s[0].winner,s[1].winner)];
+    M.knockout.third=[koTie(s[0].loser,s[1].loser)];
+    M.koRound='final';M.koIdx=0;return true;
+  }
+  if(M.koRound==='final'){M.koRound='third';M.koIdx=0;return true;}
+  if(M.koRound==='third'){mundialFinish();return false;}
+  return false;
+}
+function mundialFinish(){
+  const M=G.mundial;
+  const fin=M.knockout.final[0],third=M.knockout.third[0];
+  M.championId=fin.winner;M.viceId=fin.loser;M.thirdId=third.winner;
+  M.active=false;M.phase='done';
+  // premiação em didim (o Mundial é o torneio mais valioso — supera Copa e 1ª divisão)
+  const pay=(id,v)=>{if(id==null)return;G.budgets[id]=(G.budgets[id]||0)+v;if(id===G.myId&&G.employed)G.didim+=v;};
+  const paid=new Set();
+  const payTop=(id,v)=>{if(id==null)return;pay(id,v);paid.add(id);};
+  payTop(M.championId,MUNDIAL_POT.champ);
+  payTop(M.viceId,MUNDIAL_POT.vice);
+  payTop(M.thirdId,MUNDIAL_POT.semi);                 // 3º lugar: prêmio de semifinalista
+  payTop(third.loser,MUNDIAL_POT.semi);               // 4º lugar: prêmio de semifinalista
+  M.knockout.quarter.forEach(t=>{if(!paid.has(t.loser)){payTop(t.loser,MUNDIAL_POT.quarter);}});  // 4 eliminados nas quartas
+  M.groups.flat().forEach(id=>{if(!paid.has(id))pay(id,MUNDIAL_POT.group);});   // demais: participação na fase de grupos
+  // reputação/curriculo do usuário
+  if(G.employed&&G.myId!=null){
+    const cn=G.teams[G.myId].nome;
+    if(M.championId===G.myId){G.manager.reputation=clamp(G.manager.reputation+14,5,99);logCareer('title',`🌍 CAMPEÃO MUNDIAL de Clubes com o ${cn}`);}
+    else if(M.viceId===G.myId){G.manager.reputation=clamp(G.manager.reputation+7,5,99);logCareer('cup',`🌍 Vice do Mundial de Clubes com o ${cn}`);}
+    else if(M.thirdId===G.myId){G.manager.reputation=clamp(G.manager.reputation+3,5,99);logCareer('cup',`🌍 3º lugar no Mundial de Clubes com o ${cn}`);}
+  }
+  if(Array.isArray(G.mundialHistory))G.mundialHistory.push({season:M.season,champ:M.championId,vice:M.viceId,third:M.thirdId});
+  else G.mundialHistory=[{season:M.season,champ:M.championId,vice:M.viceId,third:M.thirdId}];
+  refreshTop();autosave();
+}
+function launchMundialMatch(ref,comp){
+  // partida ao vivo do usuário no Mundial (jogo único), à prova de falha
+  const home=ref.home,away=ref.away,iAmHome=home===G.myId,oppId=iAmHome?away:home;
+  try{
+    if(G.lineup.starters.length!==11)repairLineup(G.teams[G.myId]);
+    const eff=effectiveLineup(G.teams[G.myId],G.lineup);
+    const swapped=eff.starters.some((id,i)=>id!==G.lineup.starters[i]);
+    const myStart=eff.starters.map(pById).filter(Boolean),myBench=eff.bench.map(pById).filter(Boolean);
+    if(myStart.length<7)throw new Error('escalação insuficiente');
+    const opp=G.teams[oppId],oL=autoLineup(opp,pick(Object.keys(FORMATIONS)));
+    const oStart=oL.starters.map(id=>opp.squad.find(p=>p.id===id)).filter(Boolean);
+    const m={fx:ref,iAmHome,oppId,home,away,comp,
+      minute:0,hg:0,ag:0,events:[],onField:{me:myStart.slice(),opp:oStart.slice()},bench:{me:myBench.slice()},
+      myPow0:xiPower(myStart).all,oppPow0:xiPower(oStart).all,
+      mom:0,shots:{home:0,away:0},yellow:new Set(),yc:{home:0,away:0},rc:{home:0,away:0},injuryPending:null,
+      subsUsed:0,speed:2,timer:null,paused:false,done:false,half:1,subMode:false,subSel:null,posture:'eq',formation:G.lineup.formation};
+    m.xiIds=eff.starters.slice();m.ratings={};eff.starters.forEach(id=>m.ratings[id]=6.0);
+    m.roundData=null;m.scoreDiv=null;
+    MATCH=m;
+    if(swapped)toast('Titular suspenso/lesionado substituído automaticamente nesta partida.');
+    go('partida');document.querySelectorAll('#nav button').forEach(b=>b.classList.remove('active'));
+    renderMatch();resumeMatch();
+  }catch(err){MATCH=null;repairLineup(G.teams[G.myId]);toast('Não consegui montar o jogo do Mundial. Escalação reajustada — tente de novo.');go('mundial');}
+}
+function afterMundialLive(){
+  const M=MATCH,comp=M.comp,hg=M.hg,ag=M.ag,fx=M.fx;
+  MATCH=null;
+  const MU=G.mundial;
+  if(comp.phase==='group'){fx.hg=hg;fx.ag=ag;mundialApply(MU.table[comp.gi],fx.home,fx.away,hg,ag);}
+  else{fx.hg=hg;fx.ag=ag;mundialResolveTie(fx);}
+  if(checkDismissal())return;                   // demissão pode ocorrer também no Mundial
+  resolveBuyOffers();                            // negociações avançam durante a janela do Mundial
+  refreshTop();autosave();
+  mundialStep();                                 // segue simulando/parando na próxima do usuário
+}
+function mundialStandingsHTML(){
+  const M=G.mundial;if(!M)return '';
+  const nm=t=>G.teams[t]?G.teams[t].nome:'—';const GN=['A','B','C','D'];
+  const groupsHTML=M.groups.map((g,gi)=>{
+    const s=mundialGroupSorted(gi);
+    const rows=s.map((r,i)=>`<div class="prow" style="${r.id===G.myId?'background:rgba(43,217,127,.08)':''}">
+      <span style="width:16px;text-align:right" class="${i<2?'grass':'muted'}">${i+1}</span>
+      <span class="pname">${nm(r.id)}</span>
+      <span class="mono muted" style="font-size:11px">${r.P}j</span>
+      <span class="mono" style="font-size:11px">${r.GF-r.GA>=0?'+':''}${r.GF-r.GA}</span>
+      <span class="mono ${i<2?'grass':''}" style="min-width:26px;text-align:right;font-weight:700">${r.Pts}</span></div>`).join('');
+    return `<div class="card"><div class="eyebrow" style="margin-bottom:8px">Grupo ${GN[gi]}</div><div class="plist">${rows}</div></div>`;
+  }).join('');
+  let koHTML='';
+  if(M.knockout){
+    const tieHTML=t=>{if(!t)return'';const done=t.winner!=null;
+      return `<div class="prow"><span class="pname" style="${t.winner===t.home?'font-weight:700':''}">${nm(t.home)}</span>
+        <span class="mono" style="min-width:52px;text-align:center">${done?`${t.hg}-${t.ag}${t.pens?' (p)':''}`:'×'}</span>
+        <span class="pname" style="text-align:right;${t.winner===t.away?'font-weight:700':''}">${nm(t.away)}</span></div>`;};
+    const col=(title,ties)=>`<div class="card"><div class="eyebrow" style="margin-bottom:8px">${title}</div><div class="plist">${(ties||[]).map(tieHTML).join('')||'<div class="muted" style="font-size:12px">—</div>'}</div></div>`;
+    koHTML=`<div class="grid g2">${col('Quartas',M.knockout.quarter)}${col('Semifinais',M.knockout.semi)}${col('Final',M.knockout.final)}${col('Disputa de 3º',M.knockout.third)}</div>`;
+  }
+  const champLine=(!M.active&&M.championId!=null)?`<div class="card" style="border-color:var(--grass)">
+    <div style="font-family:var(--disp);font-weight:800;font-size:18px">🏆 Campeão: ${nm(M.championId)}</div>
+    <div class="muted" style="font-size:12px">Vice: ${nm(M.viceId)} · 3º: ${nm(M.thirdId)}</div></div>`:'';
+  return `${champLine}
+    ${(M.phase==='group'||!M.knockout)?`<div class="eyebrow" style="margin:6px 0 8px">Fase de grupos</div><div class="grid g2">${groupsHTML}</div>`:''}
+    ${M.knockout?`<div class="eyebrow" style="margin:14px 0 8px">Mata-mata</div>${koHTML}`:''}`;
+}
+function renderMundial(){
+  const M=G.mundial;const scr=document.getElementById('screen-mundial');if(!scr)return;
+  if(!M){scr.innerHTML='<div class="muted">Sem Mundial ativo.</div>';return;}
+  const nm=t=>G.teams[t]?G.teams[t].nome:'—';
+  const meIn=M.groups.some(g=>g.includes(G.myId));
+  const GN=['A','B','C','D'];
+  const pend=mundialUserPendingMatch();
+  let cta='';
+  if(M.active){
+    if(pend){const m=pend.type==='group'?pend.m:pend.tie;
+      const opp=m.home===G.myId?m.away:m.home;
+      cta=`<div class="card" style="border-color:var(--amber)"><div class="row" style="justify-content:space-between">
+        <div><div class="eyebrow amber">🌍 Sua próxima partida no Mundial</div>
+        <div style="font-weight:700;margin-top:2px">vs ${nm(opp)} · ${pend.type==='group'?'Grupo '+GN[pend.gi]:koLabel(M.koRound)}</div></div>
+        <button class="btn big amber" style="width:auto" onclick="mundialGoPlay()">▸ Escalar e jogar</button></div></div>`;
+    }else{
+      cta=`<div class="card"><div class="row" style="justify-content:space-between">
+        <div><div class="eyebrow">🌍 Mundial de Clubes · Temporada ${M.season}</div>
+        <div style="font-weight:700;margin-top:2px">${meIn?'Sem jogo seu nesta etapa':'Seu clube não está no Mundial'} — avance a competição</div></div>
+        <button class="btn big" style="width:auto" onclick="mundialStep()">Avançar Mundial ▸</button></div></div>`;
+    }
+  }else{
+    cta=`<div class="card" style="border-color:var(--grass)"><div class="eyebrow grass">🌍 Mundial encerrado</div>
+      <div style="font-weight:800;font-size:20px;font-family:var(--disp);margin-top:4px">🏆 ${nm(M.championId)} é campeão mundial!</div>
+      <div class="muted" style="font-size:13px;margin-top:2px">Vice: ${nm(M.viceId)} · 3º: ${nm(M.thirdId)}</div>
+      <button class="btn big" style="margin-top:12px" onclick="mundialClose()">Começar a temporada ▸</button></div>`;
+  }
+  scr.innerHTML=`<div class="section-title" style="margin-bottom:6px">🌍 Copa Mundial de Clubes</div>
+    <div class="muted" style="font-size:13px;margin-bottom:12px">Reúne os campeões e vices da 1ª Divisão e os campeões da Copa das últimas 4 temporadas. Acontece a cada 4 anos. Enquanto ele ocorre, as ligas ficam paradas e a janela de transferências fica aberta.</div>
+    ${cta}
+    ${mundialStandingsHTML()}`;
+}
+function koLabel(r){return ({quarter:'Quartas de final',semi:'Semifinal',final:'FINAL',third:'Disputa de 3º'})[r]||'Mata-mata';}
+function mundialGoPlay(){
+  const pend=mundialUserPendingMatch();if(!pend)return mundialStep();
+  go('escala');
+  const m=pend.type==='group'?pend.m:pend.tie;const opp=m.home===G.myId?m.away:m.home;
+  const bar=document.createElement('div');bar.className='card';bar.style.marginTop='14px';
+  bar.innerHTML=`<div class="row" style="justify-content:space-between">
+    <div><div style="font-weight:700">Mundial de Clubes — vs ${G.teams[opp].nome}</div>
+    <div class="muted" style="font-size:12px">${pend.type==='group'?'Fase de grupos':koLabel(G.mundial.koRound)} · até 5 substituições.</div></div>
+    <button class="btn big" style="width:auto" onclick="mundialStep()">▸ Iniciar partida</button></div>`;
+  document.getElementById('screen-escala').appendChild(bar);
+}
+function mundialClose(){G.mundial=null;go('hub');toast('Temporada '+G.season+' começou!');}
 function nextSeason(){
   if(!G.cup.done){toast('Finalize a Copa antes de iniciar a próxima temporada.');go('copa');return;}
   // demissão de fim de temporada: reputação no limite após a campanha
   if(G.employed&&G.myId!=null&&G.teams[G.myId].active!==false&&G.manager.reputation<=FIRE_REP){getFired();return;}
   captureSeasonAlbum();
+  recordWorldQual();          // guarda campeão/vice da 1ª div + campeão da Copa desta temporada
   computePromotions();
   // clube do usuário rebaixado para fora da 5ª divisão → clube dissolvido, treinador fica livre
   let dissolved=false;
@@ -2731,7 +3092,9 @@ function nextSeason(){
   G.round=0;G.season++;G.finished=false;G.seasonGate=0;G.buyOffers=[];G.history=[];G.offers=[];G.transferOffers=[];MKT.list=null;G.lastLeagueEarn=0;
   if(G.employed){G.div=G.teams[G.myId].div;G.lineup=autoLineup(G.teams[G.myId],G.lineup.formation);G.viewDiv=G.div;}
   else G.viewDiv=clamp(G.viewDiv,0,4);
-  refreshTop();go(G.employed?'hub':'carreira');autosave();
+  refreshTop();
+  if(!dissolved&&maybeStartMundial()){autosave();return;}   // ano de Mundial: entra no torneio antes da liga
+  go(G.employed?'hub':'carreira');autosave();
   if(dissolved)toast('Seu clube foi rebaixado da 5ª divisão e deixou o sistema. Você está livre no mercado.');
   else toast('Temporada '+G.season+' começou!');
 }
@@ -2776,6 +3139,9 @@ function migrateSave(g){
   if(!Array.isArray(g.buyOffers))g.buyOffers=[];
   if(g.lastEmployedDiv===undefined)g.lastEmployedDiv=(g.employed&&g.myId!=null&&g.teams[g.myId])?g.teams[g.myId].div:(g.viewDiv!=null?g.viewDiv:4);
   if(!Array.isArray(g.seasonAlbum))g.seasonAlbum=[];
+  if(!Array.isArray(g.worldQual))g.worldQual=[];
+  if(g.mundial===undefined)g.mundial=null;
+  if(!Array.isArray(g.mundialHistory))g.mundialHistory=[];
   if(g.repResetOnHire===undefined){                 // save no meio de uma demissão: honra o reinício ao ser recontratado
     const last=(g.careerLog||[]).slice(-1)[0];
     g.repResetOnHire=(!g.employed&&last&&last.type==='fired');
