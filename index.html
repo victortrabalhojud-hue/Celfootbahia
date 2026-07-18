@@ -552,9 +552,11 @@ function genPlayer(teamStr,group){
   const age=rint(17,36);
   const valor=playerValue(ovr,age)*rnd(.85,1.15);
   const wage=Math.round(Math.max(60000,valor*0.06*rnd(.85,1.15))/1000)*1000;
+  // potencial: teto que o jogador pode atingir na maturidade (jovens têm margem de evolução)
+  const pot=clamp(ovr+(age<=20?rint(1,9):age<=24?rint(0,5):rint(-1,2)),ovr,95);
   return {id:PID++,nome:uniqueName(),grupo:group,ovr,idade:age,valor:Math.max(120000,valor),
     wage,contract:rint(1,4),teamId:null,apps:0,xp:0,lastDelta:0,goals:0,assists:0,careerGoals:0,careerAssists:0,
-    cupGoals:0,yc:0,susp:0,inj:0,rust:0};
+    cupGoals:0,yc:0,susp:0,inj:0,rust:0,pot};
 }
 function genSquad(teamStr){
   const plan={GOL:3,DEF:8,MEI:7,ATA:4};const sq=[];
@@ -2724,27 +2726,43 @@ function developSquads(){
     const teamOver=clamp(over[t.id]||0,-6,6)*0.16;
     t.squad.forEach(p=>{
       p.idade++;
+      if(p.pot==null)p.pot=clamp(p.ovr+(p.idade<=21?6:0),p.ovr,97);   // retrocompat: infere potencial
       let playtime,userPerf=0;
       if(ai){const r=rankByOvr.indexOf(p);playtime=r<11?1:r<16?0.7:0.4;}
       else{const a=p.apps||0;playtime=clamp(a/13,0.25,1);userPerf=a>0?clamp(p.xp/a,-1,1.6):0;}
-      let raw=ageCurve(p.idade)+teamOver+userPerf+rnd(-0.5,0.5);
-      if(raw>0)raw*=playtime;                             // crescer exige minutos; declínio vem de qualquer forma
+      // jovens evoluem por talento mesmo com pouca minutagem; veteranos dependem mais de jogar
+      const growFloor=p.idade<=21?0.6:p.idade<=24?0.42:0.3;
+      const growMul=Math.max(growFloor,playtime);
+      const room=(p.pot||p.ovr)-p.ovr;                    // margem até o potencial
+      const pull=room>0?Math.min(0.8,room*0.16):0;        // puxão suave rumo ao potencial
+      let raw=ageCurve(p.idade)+pull+teamOver+userPerf+rnd(-0.5,0.5);
+      if(raw>0)raw*=growMul;                              // crescer pede minutos, mas talento jovem tem piso
       const ch=Math.round(clamp(raw,-3,3)),before=p.ovr;
       p.ovr=clamp(p.ovr+ch,40,94);p.lastDelta=p.ovr-before;
+      if(p.ovr>p.pot)p.pot=p.ovr;                          // potencial nunca abaixo do atual
       p.valor=Math.round(playerValue(p.ovr,p.idade));
       p.wage=Math.max(60000,Math.round((p.wage*0.7+p.valor*0.06*0.3)/1000)*1000);   // salário converge ao novo valor
       p.contract=(p.contract||1)-1;if(p.contract<=0&&ai)p.contract=rint(2,4);
       p.apps=0;p.xp=0;p.goals=0;p.assists=0;p.cupGoals=0;p.yc=0;p.susp=0;p.inj=0;p.rust=0;p.forSale=null;
     });
     // aposentadoria de veteranos → surge um jovem da base (lendas entram no hall histórico)
+    const divRef=[84,78,72,66,60][t.div]!=null?[84,78,72,66,60][t.div]:62;   // nível de referência FIXO da divisão (âncora anti-inflação)
     t.squad.forEach((p,i)=>{
       if(p.idade>=37&&Math.random()<(p.idade-36)*0.16){
         pushLegend(p,t);
         const np=genPlayer(t.str,p.grupo);np.idade=rint(17,20);
-        np.ovr=clamp(Math.round(t.str+rnd(-12,-2)),40,88);np.valor=Math.round(playerValue(np.ovr,np.idade));
+        np.ovr=clamp(Math.round(divRef+rnd(-11,-3)),40,84);          // nasce relativo à divisão, não à força inflada
+        const joia=Math.random()<0.05;                               // 5%: joia da base
+        np.pot=clamp(Math.round(divRef+(joia?rnd(6,12):rnd(-3,5))),np.ovr,joia?96:92);
+        np.valor=Math.round(playerValue(np.ovr,np.idade));
         t.squad[i]=np;
       }
     });
+    // revelação rara: um jovem promissor ganha um salto de potencial
+    if(Math.random()<0.08){
+      const prospects=t.squad.filter(p=>p.idade<=20&&(p.pot||0)<90);
+      if(prospects.length){const y=pick(prospects);y.pot=clamp((y.pot||y.ovr)+rint(2,6),y.ovr,94);}
+    }
     // força/prestígio dinâmicos: refletem o elenco atual e a divisão
     const top16=[...t.squad].sort((a,b)=>b.ovr-a.ovr).slice(0,16);
     t.str=Math.round(top16.reduce((s,p)=>s+p.ovr,0)/top16.length);
@@ -3142,6 +3160,9 @@ function migrateSave(g){
   if(!Array.isArray(g.worldQual))g.worldQual=[];
   if(g.mundial===undefined)g.mundial=null;
   if(!Array.isArray(g.mundialHistory))g.mundialHistory=[];
+  // pipeline de talento: infere potencial para jogadores de saves antigos (evita deflação)
+  if(Array.isArray(g.teams))g.teams.forEach(t=>{if(t&&Array.isArray(t.squad))t.squad.forEach(p=>{
+    if(p&&p.pot==null)p.pot=Math.min(97,Math.max(p.ovr,p.ovr+(p.idade<=20?9:p.idade<=23?5:p.idade<=26?2:0)));});});
   if(g.repResetOnHire===undefined){                 // save no meio de uma demissão: honra o reinício ao ser recontratado
     const last=(g.careerLog||[]).slice(-1)[0];
     g.repResetOnHire=(!g.employed&&last&&last.type==='fired');
