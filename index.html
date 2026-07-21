@@ -849,11 +849,17 @@ function renderHub(){
       ${btn}</div>`;
   }else if(nm){
     const home=G.teams[nm.home],away=G.teams[nm.away],iAmHome=nm.home===G.myId,played=nm.hg!=null;
+    const hPos=matchStandTxt(home.id,'league'),aPos=matchStandTxt(away.id,'league');
     matchHTML=`<div class="next-match">
       <div class="row" style="flex:1">${badgeHTML(home,34)}<div><div style="font-weight:700">${home.nome}</div><div class="eyebrow">${iAmHome?'Mando · você':'Visitante'}</div></div></div>
       <div class="vs">${played?`${nm.hg}×${nm.ag}`:'×'}</div>
       <div class="row" style="flex:1;justify-content:flex-end;text-align:right"><div><div style="font-weight:700">${away.nome}</div><div class="eyebrow">${!iAmHome?'Mando · você':'Visitante'}</div></div>${badgeHTML(away,34)}</div>
-    </div><div class="venue" style="margin-top:10px;padding-top:10px">🏟 ${home.stadium||teamStadium(home.nome)} · casa do ${home.nome}</div>
+    </div>
+    ${(hPos||aPos)?`<div class="row" style="justify-content:space-between;margin-top:8px">
+      <span class="mono grass" style="font-size:12px;font-weight:700">${hPos||''}</span>
+      <span class="eyebrow" style="align-self:center">classificação</span>
+      <span class="mono amber" style="font-size:12px;font-weight:700">${aPos||''}</span></div>`:''}
+    <div class="venue" style="margin-top:8px;padding-top:10px">🏟 ${home.stadium||teamStadium(home.nome)} · casa do ${home.nome}</div>
     <div class="row" style="gap:14px;margin-top:8px;flex-wrap:wrap">
       <span class="muted" style="font-size:11px">${home.nome.split(' ')[0]}: ${formHTML(home.id)}</span>
       <span class="muted" style="font-size:11px">${away.nome.split(' ')[0]}: ${formHTML(away.id)}</span></div>
