@@ -663,10 +663,14 @@ function effectiveLineup(team,L){
     .filter(p=>playerAvailable(p)&&!used.has(p.id))
     .sort((a,b)=>b.ovr-a.ovr);
   // titulares: mantém quem está apto; para os inaptos/inexistentes, busca reserva apto (mesma posição de preferência)
+  const cover=L.cover||{};
   const starters=[];
   (L.starters||[]).forEach(id=>{
     const p=byId(id);
     if(p&&playerAvailable(p)){used.add(p.id);starters.push(p.id);return;}
+    // escolha manual do treinador tem prioridade
+    const chosen=cover[id]!=null?byId(cover[id]):null;
+    if(chosen&&playerAvailable(chosen)&&!used.has(chosen.id)){used.add(chosen.id);starters.push(chosen.id);return;}
     const grp=p?p.grupo:null;                                  // se o titular sumiu do elenco, repõe por qualquer apto
     const benchFirst=(L.bench||[]).map(byId).filter(x=>x&&playerAvailable(x)&&!used.has(x.id));
     const cand=(grp&&benchFirst.find(x=>x.grupo===grp))
@@ -882,7 +886,8 @@ function renderHub(){
   const mundialCard=(G.mundial&&G.mundial.active)?`<div class="card" style="border-color:var(--amber)">
     <div class="row" style="justify-content:space-between"><div><div class="eyebrow amber">🌍 Copa Mundial de Clubes em andamento</div>
     <div style="font-weight:700;margin-top:2px">O torneio dos melhores precisa ser disputado antes da liga</div></div>
-    <button class="btn amber" onclick="go('mundial')">Ir para o Mundial ▸</button></div></div>`:'';
+    <button class="btn amber" onclick="go('mundial')">Ir para o Mundial ▸</button></div></div>`
+    :mundialCountdownCard();
   const newsCard=news?`<div class="card" style="border-left:3px solid var(--grass)">
     <div class="eyebrow" style="margin-bottom:4px">📰 Gazeta CelfootBahia</div>
     <div style="font-family:var(--disp);font-size:19px;font-weight:800;line-height:1.2">${news.title}</div>
@@ -979,11 +984,37 @@ function renderElenco(){
 }
 
 /* ===================== ESCALAÇÃO ===================== */
-let ESC_SEL=null;
+let ESC_SEL=null,ESC_COVER=null;
 function pById(id){return G.teams[G.myId].squad.find(p=>p.id===id);}
+function escCoverPick(injuredId){
+  // inicia (ou cancela) a escolha manual de quem cobre um titular indisponível
+  const inj=pById(injuredId);if(!inj)return;
+  if(ESC_COVER===injuredId){ESC_COVER=null;renderEscala();return;}   // clicar de novo cancela
+  ESC_COVER=injuredId;ESC_SEL=null;renderEscala();
+  toast(`Escolha um jogador apto para entrar no lugar de ${inj.nome.split(' ').slice(-1)[0]}.`);
+}
+function escClick(id){
+  if(ESC_COVER!=null){                                  // estamos escolhendo quem cobre o indisponível
+    const inj=pById(ESC_COVER),rep=pById(id);
+    if(!rep||!playerAvailable(rep)){ESC_COVER=null;renderEscala();return;}
+    if(inj&&rep.grupo!==inj.grupo){toast(`Escolha um ${inj.grupo} para cobrir ${inj.nome.split(' ').slice(-1)[0]}.`);return;}
+    if(!G.lineup.cover)G.lineup.cover={};
+    G.lineup.cover[ESC_COVER]=id;                        // registra a cobertura manual
+    const nome=rep.nome.split(' ').slice(-1)[0];ESC_COVER=null;renderEscala();
+    toast(`${nome} entra no lugar do titular indisponível.`);
+    return;
+  }
+  if(ESC_SEL===null){ESC_SEL=id;renderEscala();return;}
+  if(ESC_SEL===id){ESC_SEL=null;renderEscala();return;}
+  swapLineup(ESC_SEL,id);ESC_SEL=null;renderEscala();
+}
 function renderEscala(){
   const my=G.teams[G.myId],L=G.lineup;
   if(L.starters.length!==11)repairLineup(my);
+  if(!L.cover)L.cover={};
+  // limpa coberturas obsoletas (titular voltou/saiu, ou o escolhido ficou indisponível)
+  Object.keys(L.cover).forEach(k=>{const inj=pById(+k),rep=pById(L.cover[k]);
+    if(!inj||!L.starters.includes(+k)||playerAvailable(inj)||!rep||!playerAvailable(rep))delete L.cover[k];});
   const eff=effectiveLineup(my,L);                       // quem realmente joga nesta partida
   const effStarters=eff.starters.map(pById).filter(Boolean);
   const effBench=eff.bench.map(pById).filter(Boolean);
@@ -1003,19 +1034,21 @@ function renderEscala(){
   const benchRows=effBench.map(p=>benchRowHTML(p)).join('')||'<div class="muted" style="font-size:12px">Banco vazio</div>';
   const foraRows=fora.sort((a,b)=>b.ovr-a.ovr).map(p=>benchRowHTML(p)).join('')||'<div class="muted" style="font-size:12px">—</div>';
   const unavailRows=unavail.sort((a,b)=>b.ovr-a.ovr).map(p=>benchRowHTML(p)).join('');
-  // aviso no topo: descreve cada substituição automática
-  const subList=Object.entries(subFor).map(([inId,outP])=>{const inP=pById(+inId);return {inP,outP};}).filter(x=>x.inP);
+  // aviso no topo: descreve cada substituição (automática ou escolhida) e como ajustar
+  const subList=Object.entries(subFor).map(([inId,outP])=>{const inP=pById(+inId);const manual=L.cover&&L.cover[outP.id]===+inId;return {inP,outP,manual};}).filter(x=>x.inP);
+  const coverMsg=ESC_COVER!=null?`<div class="card" style="border-color:var(--grass);background:rgba(43,217,127,.08);margin-bottom:10px;padding:10px 12px">
+     <div class="grass" style="font-size:12px;font-weight:600">Escolha quem entra no lugar de ${(pById(ESC_COVER)||{}).nome||''} — clique num jogador apto (mesma posição) no banco ou fora da relação. Clique no substituto de novo para cancelar.</div></div>`:'';
   const autoNote=subList.length?`<div class="card" style="border-color:var(--danger);background:rgba(226,75,75,.08);margin-bottom:10px;padding:10px 12px">
      <div class="muted" style="font-size:12px">${subList.map(s=>{const tag=(s.outP.inj||0)>0?'🚑':'🟥';const dur=(s.outP.inj||0)>0?`${s.outP.inj} rodada(s)`:`${s.outP.susp} jogo(s)`;
-       return `${tag} <b style="font-weight:600" class="danger">${s.outP.nome}</b> (${s.outP.grupo}) fora por ${dur}. <b style="font-weight:600">${s.inP.nome}</b> entra no lugar só nesta partida.`;}).join('<br>')}
-       <br>Ao voltar, ${subList.length>1?'retomam':'retoma'} a vaga automaticamente — você não precisa mexer em nada.</div></div>`:'';
+       return `${tag} <b style="font-weight:600" class="danger">${s.outP.nome}</b> (${s.outP.grupo}) fora por ${dur}. <b style="font-weight:600">${s.inP.nome}</b> entra no lugar${s.manual?' <span class="grass">(sua escolha)</span>':''}.`;}).join('<br>')}
+       <br>Toque no substituto (borda âmbar) para escolher outro jogador. Ao voltar, o titular retoma a vaga automaticamente.</div></div>`:'';
   document.getElementById('screen-escala').innerHTML=`
    <div class="row" style="justify-content:space-between;margin-bottom:12px">
      <div><div class="section-title">Escalação</div>
      <div class="muted" style="font-size:13px">Clique num titular e depois num reserva da mesma posição para trocar.</div></div>
      <div class="row"><span class="eyebrow">Formação</span><select onchange="setFormation(this.value)">${options}</select>
        <button class="btn ghost" onclick="autoEscala()">Auto</button></div></div>
-   ${autoNote}
+   ${coverMsg}${autoNote}
    <div class="grid g2"><div>${pitch}
      <div class="row" style="justify-content:space-around;margin-top:10px">
        <div class="kpi" style="align-items:center"><span class="k">Ataque</span><span class="v grass">${Math.round(power.atk)}</span></div>
@@ -1028,21 +1061,20 @@ function renderEscala(){
 }
 function tokenHTML(p,subOut){
   const sel=ESC_SEL===p.id?'sel':'';
-  const clickable=!subOut;                               // substituto automático não é editável
+  const covering=subOut&&ESC_COVER===subOut.id;
   const tarja=subOut?`<div class="subtag">entra por ${subOut.nome.split(' ').slice(-1)[0]} ${(subOut.inj||0)>0?'🚑':'🟥'}</div>`:'';
-  return `<div class="token ${sel}" style="${subOut?'border-color:var(--amber)':''}" onclick="${clickable?`escClick(${p.id})`:`toast('Substituto automático por lesão/suspensão — o titular retoma a vaga ao voltar.')`}">
+  // substituto automático agora é clicável: abre a escolha de quem cobre o titular indisponível
+  const click=subOut?`escCoverPick(${subOut.id})`:`escClick(${p.id})`;
+  return `<div class="token ${sel}" style="${subOut?`border-color:${covering?'var(--grass)':'var(--amber)'}`:''}" onclick="${click}">
   <div class="disc">${p.ovr}</div><div class="tn">${p.nome.split(' ').slice(-1)[0]}</div><div class="to">${p.grupo}</div>${tarja}</div>`;}
 function benchRowHTML(p){const un=!playerAvailable(p);const tag=(p.inj||0)>0?` <span class="danger" style="font-size:10px">🚑 ${p.inj} rod.</span>`:(p.susp||0)>0?` <span class="danger" style="font-size:10px">🟥 ${p.susp} j.</span>`:'';
-  return `<div class="prow ${ESC_SEL===p.id?'sel':''}" style="${un?'opacity:.6':''}" onclick="${un?`toast('Indisponível: volta automaticamente ao cumprir a lesão/suspensão.')`:`escClick(${p.id})`}">
+  const picking=ESC_COVER!=null&&!un;                          // no modo cobertura, aptos viram alvo da escolha
+  const cov=un?`escCoverPick(${p.id})`:`escClick(${p.id})`;    // clicar num indisponível também escolhe a cobertura dele
+  return `<div class="prow ${ESC_SEL===p.id?'sel':''} ${picking?'sel':''}" style="${un?'opacity:.65':''}" onclick="${cov}">
   <span class="pos ${p.grupo}">${p.grupo}</span><span class="pname">${p.nome}${tag}</span>
   <span class="sub">${p.idade}a</span><span class="ovr ${ovrClass(p.ovr)}">${p.ovr}</span></div>`;}
-function setFormation(f){G.lineup=autoLineup(G.teams[G.myId],f);ESC_SEL=null;renderEscala();}
-function autoEscala(){G.lineup=autoLineup(G.teams[G.myId],G.lineup.formation);ESC_SEL=null;renderEscala();toast("Escalação automática aplicada.");}
-function escClick(id){
-  if(ESC_SEL===null){ESC_SEL=id;renderEscala();return;}
-  if(ESC_SEL===id){ESC_SEL=null;renderEscala();return;}
-  swapLineup(ESC_SEL,id);ESC_SEL=null;renderEscala();
-}
+function setFormation(f){G.lineup=autoLineup(G.teams[G.myId],f);G.lineup.cover={};ESC_SEL=null;ESC_COVER=null;renderEscala();}
+function autoEscala(){G.lineup=autoLineup(G.teams[G.myId],G.lineup.formation);G.lineup.cover={};ESC_SEL=null;ESC_COVER=null;renderEscala();toast("Escalação automática aplicada.");}
 function swapLineup(a,b){
   const L=G.lineup,pa=pById(a),pb=pById(b);
   const inStartA=L.starters.includes(a),inStartB=L.starters.includes(b);
@@ -1744,10 +1776,16 @@ function preMatch(){
   if(G.lineup.starters.length!==11)repairLineup(G.teams[G.myId]);
   go('escala');
   const oppId=nm?(nm.home===G.myId?nm.away:nm.home):null;
-  const formRow=oppId!=null?`<div class="row" style="gap:14px;margin-top:8px;flex-wrap:wrap">
-      <span class="muted" style="font-size:12px">Sua forma: ${formHTML(G.myId)}</span>
-      <span class="muted" style="font-size:12px">${G.teams[oppId].nome}: ${formHTML(oppId)}</span>
-      ${h2hHTML(G.myId,oppId)}</div>`:'';
+  const myPos=matchStandTxt(G.myId),oppPos=oppId!=null?matchStandTxt(oppId):'';
+  const formRow=oppId!=null?`<div style="margin-top:10px;border-top:1px solid var(--line);padding-top:10px">
+      <div class="row" style="gap:14px;flex-wrap:wrap;align-items:center">
+        <span style="font-size:13px;font-weight:700">${G.teams[G.myId].nome}${myPos?` <span class="grass mono" style="font-size:12px">${myPos}</span>`:''}</span>
+        <span class="muted">vs</span>
+        <span style="font-size:13px;font-weight:700">${G.teams[oppId].nome}${oppPos?` <span class="amber mono" style="font-size:12px">${oppPos}</span>`:''}</span></div>
+      <div class="row" style="gap:14px;margin-top:6px;flex-wrap:wrap">
+        <span class="muted" style="font-size:12px">Sua forma: ${formHTML(G.myId)}</span>
+        <span class="muted" style="font-size:12px">${G.teams[oppId].nome}: ${formHTML(oppId)}</span></div>
+      ${h2hHTML(G.myId,oppId)?`<div class="muted" style="font-size:12px;margin-top:4px">${h2hHTML(G.myId,oppId)}</div>`:''}</div>`:'';
   const bar=document.createElement('div');bar.className='card';bar.style.marginTop='14px';
   bar.innerHTML=`<div class="row" style="justify-content:space-between">
     <div><div style="font-weight:700">Escalação confirmada?</div>
@@ -1994,14 +2032,16 @@ function pushEvent(min,mark,text,goal,kind){
   if(goal){const sc=document.getElementById('mScore');
     if(sc){sc.classList.remove('gpulse');void sc.offsetWidth;sc.classList.add('gpulse');}}
 }
-function matchStandTxt(teamId){
-  // posição do time para exibir na partida; na Copa, inclui a divisão (times de ligas distintas)
+function matchStandTxt(teamId,ctx){
+  // posição do time; 'cup'/'mundial' incluem a divisão (times de ligas distintas). ctx opcional na pré-partida.
   const t=G.teams[teamId];if(!t)return'';
-  const isCup=MATCH&&MATCH.comp&&MATCH.comp.type==='cup';
-  const tb=sortedTable(t.div);const pos=tb.findIndex(r=>r.id===teamId)+1;
-  if(!pos)return isCup?DIV_NAMES[t.div]:'';
+  const kind=ctx||(MATCH&&MATCH.comp?MATCH.comp.type:'league');
+  const cross=kind==='cup'||kind==='mundial';
+  const tb=sortedTable(t.div);const row=tb.find(r=>r.id===teamId);const pos=tb.findIndex(r=>r.id===teamId)+1;
+  const played=row&&(row.P||0)>0;                       // liga já começou?
+  if(!pos||!played)return cross?DIV_NAMES[t.div]:'';    // sem jogos: só a divisão (ou nada, na liga)
   const ord=pos+'º';
-  return isCup?`${DIV_NAMES[t.div]} · ${ord}`:ord;
+  return cross?`${DIV_NAMES[t.div]} · ${ord}`:ord;
 }
 function renderMatch(){
   const M=MATCH,home=G.teams[M.home],away=G.teams[M.away];
@@ -2465,6 +2505,30 @@ function awardCupPrizes(){
   }
   refreshTop();
 }
+function cupGoPlay(){
+  // tela de pré-jogo da Copa: mostra classificação/forma e permite ajustar antes de iniciar
+  const pend=cupUserLegPending();if(!pend)return toast('Sem jogo de Copa agora.');
+  if(!cupLegDue())return toast('Pelo calendário, sua partida da Copa acontece após a rodada '+cupNextDueRound()+' do campeonato.');
+  if(G.lineup.starters.length!==11)repairLineup(G.teams[G.myId]);
+  go('escala');
+  const home=pend.leg===1?pend.tie.a:pend.tie.b,away=pend.leg===1?pend.tie.b:pend.tie.a;
+  const opp=home===G.myId?away:home;
+  const myPos=matchStandTxt(G.myId,'cup'),oppPos=matchStandTxt(opp,'cup');
+  const bar=document.createElement('div');bar.className='card';bar.style.marginTop='14px';
+  bar.innerHTML=`<div class="row" style="justify-content:space-between">
+    <div><div style="font-weight:700">🏆 Copa — vs ${G.teams[opp].nome}</div>
+    <div class="muted" style="font-size:12px">${cupStage().name} · até 5 substituições.</div></div>
+    <button class="btn big" style="width:auto" onclick="cupPlayLive()">▸ Iniciar partida</button></div>
+    <div style="margin-top:10px;border-top:1px solid var(--line);padding-top:10px">
+      <div class="row" style="gap:14px;flex-wrap:wrap;align-items:center">
+        <span style="font-size:13px;font-weight:700">${G.teams[G.myId].nome}${myPos?` <span class="grass mono" style="font-size:12px">${myPos}</span>`:''}</span>
+        <span class="muted">vs</span>
+        <span style="font-size:13px;font-weight:700">${G.teams[opp].nome}${oppPos?` <span class="amber mono" style="font-size:12px">${oppPos}</span>`:''}</span></div>
+      <div class="row" style="gap:14px;margin-top:6px;flex-wrap:wrap">
+        <span class="muted" style="font-size:12px">Sua forma: ${formHTML(G.myId)}</span>
+        <span class="muted" style="font-size:12px">${G.teams[opp].nome}: ${formHTML(opp)}</span></div></div>`;
+  document.getElementById('screen-escala').appendChild(bar);
+}
 function cupPlayLive(){
   const pend=cupUserLegPending();if(!pend)return toast('Sem jogo de Copa agora.');
   if(!cupLegDue())return toast('Pelo calendário, sua partida da Copa acontece após a rodada '+cupNextDueRound()+' do campeonato.');
@@ -2555,7 +2619,7 @@ function renderCopa(){
       <div class="row" style="justify-content:space-between"><div>
         <div class="eyebrow amber">Seu confronto — ${st.name} · ${legTxt}</div>
         <div style="font-weight:700;margin-top:2px">${G.teams[pend.leg===1?pend.tie.a:pend.tie.b].nome} × ${G.teams[pend.leg===1?pend.tie.b:pend.tie.a].nome}</div></div>
-        <div class="row"><button class="btn" ${due?'':'disabled'} onclick="cupPlayLive()">▸ Jogar ao vivo</button>
+        <div class="row"><button class="btn" ${due?'':'disabled'} onclick="cupGoPlay()">▸ Jogar ao vivo</button>
         <button class="btn ghost" ${due?'':'disabled'} onclick="cupStepUI()">⏩ Simular</button></div></div></div>`;
   }else{
     const label=myTie?'Sua partida desta fase já foi disputada.':'Você não está mais na Copa.';
@@ -2834,6 +2898,26 @@ function mundialQualifiers(){
   }
   return picked.slice(0,16);
 }
+function nextMundialSeason(){
+  // primeira temporada múltipla de 4 (>= atual) em que já haverá 4 anos de histórico registrado
+  const have=(G.worldQual||[]).length;
+  for(let s=G.season;s<=G.season+12;s++){
+    if(s%4!==0)continue;
+    const willHave=have+Math.max(0,s-G.season);   // cada temporada que passa registra +1 no histórico
+    if(willHave>=4)return s;
+  }
+  return null;
+}
+function mundialCountdownCard(){
+  if(!G.employed)return '';
+  const s=nextMundialSeason();if(s==null)return '';
+  const falta=s-G.season;
+  const txt=falta<=0?'ao final desta temporada':falta===1?'na próxima temporada':`em ${falta} temporadas (temporada ${s})`;
+  return `<div class="card" style="border-left:3px solid var(--amber)">
+    <div class="eyebrow amber" style="margin-bottom:3px">🌍 Copa Mundial de Clubes</div>
+    <div style="font-weight:700">Próxima edição: ${txt}</div>
+    <div class="muted" style="font-size:12px;margin-top:2px">Reúne campeões e vices da 1ª Divisão e campeões da Copa das últimas 4 temporadas. Acontece a cada 4 anos.</div></div>`;
+}
 function maybeStartMundial(){
   if(G.season%4!==0)return false;                       // a cada 4 temporadas
   if((G.worldQual||[]).length<4)return false;           // precisa de 4 anos de histórico
@@ -2888,19 +2972,21 @@ function mundialSimMatch(m){const r=simMatch(m.home,m.away);
   // desempate no mata-mata: pênaltis
   return r;}
 function mundialStep(){
-  // avança o Mundial simulando tudo que não for do usuário, parando quando for a vez dele jogar ao vivo
-  const M=G.mundial;if(!M||!M.active)return;
+  // avança o Mundial simulando tudo que não for do usuário; PARA quando for a vez dele (sem lançar direto)
+  const M=G.mundial;if(!M||!M.active){go('mundial');return;}
   let guard=0;
   while(guard++<200){
     const pend=mundialUserPendingMatch();
-    if(pend){                                   // é a vez do usuário: joga ao vivo
-      if(pend.type==='group')launchMundialMatch(pend.m,{type:'mundial',phase:'group',gi:pend.gi});
-      else launchMundialMatch(pend.tie,{type:'mundial',phase:'ko',tie:pend.tie});
-      return;
-    }
+    if(pend){go('mundial');return;}             // é a vez do usuário: mostra a tela p/ ele escalar e jogar
     if(!mundialAdvanceAuto())break;             // simula a próxima pendência da IA; para se acabou a fase
   }
-  renderMundial();
+  go('mundial');                                 // fim de fase/torneio: mostra o estado atual
+}
+function mundialPlayNow(){
+  // inicia de fato a partida do usuário (chamado após a tela de escalação)
+  const pend=mundialUserPendingMatch();if(!pend)return mundialStep();
+  if(pend.type==='group')launchMundialMatch(pend.m,{type:'mundial',phase:'group',gi:pend.gi});
+  else launchMundialMatch(pend.tie,{type:'mundial',phase:'ko',tie:pend.tie});
 }
 function mundialAdvanceAuto(){
   const M=G.mundial;
@@ -3083,11 +3169,16 @@ function mundialGoPlay(){
   const pend=mundialUserPendingMatch();if(!pend)return mundialStep();
   go('escala');
   const m=pend.type==='group'?pend.m:pend.tie;const opp=m.home===G.myId?m.away:m.home;
+  const myPos=matchStandTxt(G.myId,'mundial'),oppPos=matchStandTxt(opp,'mundial');
   const bar=document.createElement('div');bar.className='card';bar.style.marginTop='14px';
   bar.innerHTML=`<div class="row" style="justify-content:space-between">
-    <div><div style="font-weight:700">Mundial de Clubes — vs ${G.teams[opp].nome}</div>
+    <div><div style="font-weight:700">🌍 Mundial de Clubes — vs ${G.teams[opp].nome}</div>
     <div class="muted" style="font-size:12px">${pend.type==='group'?'Fase de grupos':koLabel(G.mundial.koRound)} · até 5 substituições.</div></div>
-    <button class="btn big" style="width:auto" onclick="mundialStep()">▸ Iniciar partida</button></div>`;
+    <button class="btn big" style="width:auto" onclick="mundialPlayNow()">▸ Iniciar partida</button></div>
+    <div style="margin-top:10px;border-top:1px solid var(--line);padding-top:10px" class="row">
+      <span style="font-size:13px;font-weight:700">${G.teams[G.myId].nome} <span class="grass mono" style="font-size:12px">${myPos}</span></span>
+      <span class="muted" style="margin:0 10px">vs</span>
+      <span style="font-size:13px;font-weight:700">${G.teams[opp].nome} <span class="amber mono" style="font-size:12px">${oppPos}</span></span></div>`;
   document.getElementById('screen-escala').appendChild(bar);
 }
 function mundialClose(){G.mundial=null;go('hub');toast('Temporada '+G.season+' começou!');}
