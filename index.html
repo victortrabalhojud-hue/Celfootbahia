@@ -383,6 +383,7 @@ input[type=text]:focus{outline:none;border-color:var(--grass);box-shadow:0 0 0 3
     <div id="screen-premiacao" class="hidden"></div>
     <div id="screen-partida" class="hidden"></div>
     <div id="screen-mundial" class="hidden"></div>
+    <div id="screen-amistoso" class="hidden"></div>
   </div>
 </div>
 
@@ -746,7 +747,7 @@ function startGame(teamId){
     manager:{name:coach,reputation:clamp(my.prestige-8,22,82)},
     season:1,round:0,leagues:null,offers:[],history:[],finished:false,viewDiv:my.div,
     lineup:autoLineup(my,"4-3-3"),lastPos:null,lastPrize:0,lastChamp:false,champions:[],
-    cup:null,leaguePodium:[],lastLeagueEarn:0,transferOffers:[],lastWages:0,legends:[],morale:60,lastTV:0,lastGate:0,careerLog:[],seasonGate:0,seasonReview:null,buyOffers:[],lastEmployedDiv:null,repResetOnHire:false,justFired:false,seasonAlbum:[],worldQual:[],mundial:null,mundialHistory:[]};
+    cup:null,leaguePodium:[],lastLeagueEarn:0,transferOffers:[],lastWages:0,legends:[],morale:60,lastTV:0,lastGate:0,careerLog:[],seasonGate:0,seasonReview:null,buyOffers:[],lastEmployedDiv:null,repResetOnHire:false,justFired:false,seasonAlbum:[],worldQual:[],mundial:null,mundialHistory:[],friendlyHistory:[],friendlyPlayed:[]};
   G.didim=budgets[teamId];
   logCareer('job',`${coach} assume o ${my.nome} (${DIV_NAMES[my.div]}) — início da carreira`);
   buildLeagues();buildCup();
@@ -759,7 +760,7 @@ function startGame(teamId){
 
 /* ===================== NAV / ROTEADOR / TOPO ===================== */
 const NAV=[["hub","Escritório"],["elenco","Elenco"],["escala","Escalação"],["mercado","Mercado"],
-  ["tabela","Tabela"],["jogos","Jogos"],["copa","Copa"],["carreira","Carreira"]];
+  ["tabela","Tabela"],["jogos","Jogos"],["copa","Copa"],["amistoso","🤝 Amistoso"],["carreira","Carreira"]];
 function buildNav(){
   const n=document.getElementById('nav');n.innerHTML='';
   NAV.forEach(([id,label])=>{
@@ -779,7 +780,7 @@ function go(s){
   }
   if(!G.employed && (s==='elenco'||s==='escala'||s==='mercado')){toast("Você não tem clube no momento.");return;}
   CUR=s;
-  ["hub","elenco","escala","mercado","tabela","jogos","copa","premiacao","carreira","partida","mundial"].forEach(id=>
+  ["hub","elenco","escala","mercado","tabela","jogos","copa","premiacao","carreira","partida","mundial","amistoso"].forEach(id=>
     document.getElementById('screen-'+id).classList.toggle('hidden',id!==s));
   const scr=document.getElementById('screen-'+s);
   if(scr){scr.classList.remove('screen-in');void scr.offsetWidth;scr.classList.add('screen-in');}
@@ -789,6 +790,7 @@ function go(s){
   if(s==='escala')renderEscala();
   if(s==='mercado')renderMercado();
   if(s==='mundial')renderMundial();
+  if(s==='amistoso'&&!document.getElementById('screen-amistoso').innerHTML.trim())renderAmistoso();
   if(s==='tabela')renderTabela();
   if(s==='jogos')renderJogos();
   if(s==='copa')renderCopa();
@@ -1973,6 +1975,7 @@ function tryChance(side,prob,atk,def){
       if(M.comp&&M.comp.type==='league'&&sc){creditGoal(sc);rate(sc,1.0);
         const as=assistFrom(sidePlayers(side),sc);if(as){creditAssist(as);rate(as,0.5);}}   // artilharia + assistências (só liga)
       else if(M.comp&&M.comp.type==='cup'&&sc){sc.cupGoals=(sc.cupGoals||0)+1;sc.careerGoals=(sc.careerGoals||0)+1;rate(sc,1.0);}
+      else if(sc){rate(sc,1.0);const as=assistFrom(sidePlayers(side),sc);if(as)rate(as,0.5);}   // mundial/amistoso: nota, sem estatística permanente
       M.mom=clamp(M.mom+(side==='home'?0.9:-0.9),-3,3);
       pushEvent(M.minute,'⚽',pick(CMT_GOAL)(sc.nome)+` — ${tname}`,true);
     }else{
@@ -2041,6 +2044,7 @@ function pushEvent(min,mark,text,goal,kind){
 function matchStandTxt(teamId,ctx){
   // posição do time; 'cup'/'mundial' incluem a divisão (times de ligas distintas). ctx opcional na pré-partida.
   const t=G.teams[teamId];if(!t)return'';
+  if(t._ghost||t.div==null||t.div>4||!G.leagues[t.div])return'';   // time de amistoso não tem classificação
   const kind=ctx||(MATCH&&MATCH.comp?MATCH.comp.type:'league');
   const cross=kind==='cup'||kind==='mundial';
   const tb=sortedTable(t.div);const row=tb.find(r=>r.id===teamId);const pos=tb.findIndex(r=>r.id===teamId)+1;
@@ -2226,6 +2230,16 @@ function endMatch(){
     const bp=G.teams[G.myId]&&G.teams[G.myId].squad.find(p=>p.id===+best);
     if(bp)craque=` · ⭐ Craque: ${bp.nome.split(' ').slice(-1)[0]} (${M.ratings[best].toFixed(1)})`;}}
   const fichaHTML=`<div class="mono muted" style="font-size:12px;margin-top:4px">Finalizações ${M.shots.home}-${M.shots.away} · 🟨 ${M.yc.home}-${M.yc.away} · 🟥 ${M.rc.home}-${M.rc.away}${craque}</div>`;
+  if(M.comp&&M.comp.type==='friendly'){
+    updateBoard();closeSubs();
+    const panel=document.createElement('div');panel.className='card';panel.style.marginTop='14px';
+    panel.innerHTML=`<div class="row" style="justify-content:space-between">
+      <div><div class="section-title ${col}">${verd} <span class="muted" style="font-size:13px;font-weight:400">· 🤝 Amistoso</span></div>
+      <div class="muted" style="font-size:13px">${G.teams[M.home].nome} ${M.hg}–${M.ag} ${G.teams[M.away].nome}</div>${fichaHTML}</div>
+      <button class="btn big" style="width:auto" onclick="afterFriendlyLive()">Ver resultado ▸</button></div>`;
+    document.getElementById('screen-partida').appendChild(panel);
+    return;
+  }
   if(M.comp&&M.comp.type==='cup'){
     const tie=M.comp.tie,leg=M.comp.leg;
     tie['leg'+leg]={hg:M.hg,ag:M.ag};
@@ -3225,6 +3239,268 @@ let GAME_ACTIVE=false;
 function lsOK(){try{localStorage.setItem('__t','1');localStorage.removeItem('__t');return true;}catch(e){return false;}}
 function readManifest(){try{return JSON.parse(localStorage.getItem(MANIFEST)||'{}');}catch(e){return {};}}
 function writeManifest(m){try{localStorage.setItem(MANIFEST,JSON.stringify(m));}catch(e){}}
+/* ===================== AMISTOSO POR CONVITE (entre dois jogadores) ===================== */
+// Troca assíncrona: um cria o convite (seu time), o outro joga ao vivo e devolve o resultado.
+// Totalmente isolado: usa um time "fantasma" temporário; não altera ligas, estatísticas nem reputação.
+const FRIENDLY_TAG='CFBFR1';
+function b64enc(obj){try{return FRIENDLY_TAG+btoa(unescape(encodeURIComponent(JSON.stringify(obj))));}catch(e){return '';}}
+function b64dec(str){try{const s=String(str||'').trim().replace(/\s+/g,'');
+  if(s.indexOf(FRIENDLY_TAG)!==0)return null;return JSON.parse(decodeURIComponent(escape(atob(s.slice(FRIENDLY_TAG.length)))));}catch(e){return null;}}
+function teamSnapshot(){
+  // "foto" do time do usuário para enviar ao adversário
+  const t=G.teams[G.myId];const L=G.lineup;
+  const compact=p=>({id:p.id,nome:p.nome,grupo:p.grupo,ovr:p.ovr,idade:p.idade});
+  return {manager:G.manager.name,club:{nome:t.nome,hue:t.hue,color:t.color,txt:t.txt,stadium:t.stadium||teamStadium(t.nome),str:t.str},
+    formation:L.formation,starters:(L.starters||[]).slice(),bench:(L.bench||[]).slice(),
+    squad:t.squad.map(compact)};
+}
+function newCid(){return 'F'+Date.now().toString(36)+Math.floor(Math.random()*1e4).toString(36);}
+function friendlyMakeInvite(){
+  if(G.myId==null)return toast('Você precisa ter um clube para convidar.');
+  const snap=teamSnapshot();
+  const invite={type:'invite',v:1,cid:newCid(),season:G.season,from:snap};
+  FRIENDLY.lastInvite=invite;
+  return b64enc(invite);
+}
+function ghostFromSnapshot(snap){
+  // reconstrói um time jogável a partir da foto recebida (id temporário fora das ligas)
+  const gid=G.teams.length;
+  const squad=snap.squad.map(p=>({id:p.id,nome:p.nome,grupo:p.grupo,ovr:p.ovr,idade:p.idade,
+    valor:playerValue(p.ovr,p.idade),wage:60000,contract:2,teamId:gid,apps:0,xp:0,lastDelta:0,
+    goals:0,assists:0,careerGoals:0,careerAssists:0,cupGoals:0,yc:0,susp:0,inj:0,rust:0,pot:p.ovr}));
+  const ghost={id:gid,nome:snap.club.nome,liga:'Amistoso',str:snap.club.str||xiAvg(squad),div:99,active:false,
+    ini:(snap.club.nome||'?').slice(0,3).toUpperCase(),hue:snap.club.hue||210,color:snap.club.color,txt:snap.club.txt,
+    stadium:snap.club.stadium,prestige:50,homeAdv:1,squad,_ghost:true,
+    lineup:{formation:snap.formation||'4-3-3',starters:(snap.starters||[]).slice(),bench:(snap.bench||[]).slice()}};
+  return ghost;
+}
+function xiAvg(squad){const s=[...squad].sort((a,b)=>b.ovr-a.ovr).slice(0,11);return Math.round(s.reduce((x,p)=>x+p.ovr,0)/Math.max(1,s.length));}
+function ghostAutoLineup(ghost){
+  // escalação do time fantasma (usa a enviada; se faltar, monta automática)
+  const L=ghost.lineup||{};
+  const valid=(L.starters||[]).filter(id=>ghost.squad.some(p=>p.id===id));
+  if(valid.length===11)return {starters:valid,bench:(L.bench||[]).filter(id=>ghost.squad.some(p=>p.id===id))};
+  // fallback: melhores por posição
+  const by=g=>ghost.squad.filter(p=>p.grupo===g).sort((a,b)=>b.ovr-a.ovr);
+  const gk=by('GOL'),df=by('DEF'),mf=by('MEI'),at=by('ATA');
+  const starters=[...gk.slice(0,1),...df.slice(0,4),...mf.slice(0,3),...at.slice(0,3)].map(p=>p.id);
+  const rest=ghost.squad.filter(p=>!starters.includes(p.id)).sort((a,b)=>b.ovr-a.ovr).slice(0,8).map(p=>p.id);
+  while(starters.length<11){const extra=ghost.squad.find(p=>!starters.includes(p.id));if(!extra)break;starters.push(extra.id);}
+  return {starters:starters.slice(0,11),bench:rest};
+}
+function friendlyGoPlay(snap,ctx){
+  // leva à tela de escalação antes do amistoso; o jogo só inicia ao confirmar
+  if(G.myId==null)return toast('Você precisa ter um clube para jogar o amistoso.');
+  if(MATCH&&!MATCH.done)return toast('Termine a partida atual primeiro.');
+  FRIENDLY.pending={snap,ctx};
+  if(G.lineup.starters.length!==11)repairLineup(G.teams[G.myId]);
+  go('escala');
+  const bar=document.createElement('div');bar.className='card';bar.style.marginTop='14px';
+  const oppStr=snap.club.str||'?';
+  bar.innerHTML=`<div class="row" style="justify-content:space-between">
+    <div><div style="font-weight:700">🤝 Amistoso — vs ${snap.club.nome}</div>
+    <div class="muted" style="font-size:12px">Técnico: ${snap.manager||'—'} · força ~${oppStr} · até 5 substituições.</div></div>
+    <button class="btn big" style="width:auto" onclick="friendlyLaunchNow()">▸ Iniciar partida</button></div>`;
+  document.getElementById('screen-escala').appendChild(bar);
+}
+function friendlyLaunchNow(){
+  const p=FRIENDLY.pending;if(!p)return toast('Sem amistoso para iniciar.');
+  friendlyStart(p.snap,p.ctx);
+}
+function friendlyStart(snap,ctx){
+  // inicia a partida ao vivo: seu time real vs o time fantasma recebido
+  if(G.myId==null)return toast('Você precisa ter um clube para jogar o amistoso.');
+  if(MATCH&&!MATCH.done)return toast('Termine a partida atual primeiro.');
+  const ghost=ghostFromSnapshot(snap);
+  G.teams.push(ghost);                                  // fantasma entra num índice novo (não afeta ligas)
+  FRIENDLY.active={cid:ctx.cid,ghostId:ghost.id,oppManager:snap.manager,oppClub:snap.club.nome,role:ctx.role};
+  try{
+    if(G.lineup.starters.length!==11)repairLineup(G.teams[G.myId]);
+    const eff=effectiveLineup(G.teams[G.myId],G.lineup);
+    const myStart=eff.starters.map(pById).filter(Boolean),myBench=eff.bench.map(pById).filter(Boolean);
+    if(myStart.length<7)throw new Error('escalação insuficiente');
+    const oL=ghostAutoLineup(ghost);
+    const oStart=oL.starters.map(id=>ghost.squad.find(p=>p.id===id)).filter(Boolean);
+    const iAmHome=true;                                  // você sempre manda no seu amistoso
+    const m={fx:null,iAmHome,oppId:ghost.id,home:G.myId,away:ghost.id,comp:{type:'friendly',cid:ctx.cid},
+      minute:0,hg:0,ag:0,events:[],onField:{me:myStart.slice(),opp:oStart.slice()},bench:{me:myBench.slice()},
+      myPow0:xiPower(myStart).all,oppPow0:xiPower(oStart).all,
+      mom:0,shots:{home:0,away:0},yellow:new Set(),yc:{home:0,away:0},rc:{home:0,away:0},injuryPending:null,
+      subsUsed:0,speed:2,timer:null,paused:false,done:false,half:1,subMode:false,subSel:null,posture:'eq',formation:G.lineup.formation};
+    m.xiIds=eff.starters.slice();m.ratings={};eff.starters.forEach(id=>m.ratings[id]=6.0);
+    m.roundData=null;m.scoreDiv=null;
+    MATCH=m;
+    go('partida');document.querySelectorAll('#nav button').forEach(b=>b.classList.remove('active'));
+    renderMatch();resumeMatch();
+  }catch(err){friendlyCleanup();MATCH=null;repairLineup(G.teams[G.myId]);toast('Não consegui montar o amistoso. Tente de novo.');go('hub');}
+}
+function friendlyCleanup(){
+  // remove o time fantasma do fim de G.teams (nunca esteve em liga alguma)
+  if(G.teams.length&&G.teams[G.teams.length-1]&&G.teams[G.teams.length-1]._ghost)G.teams.pop();
+}
+function afterFriendlyLive(){
+  // fim do amistoso: registra no histórico e decide o próximo passo conforme o papel
+  const M=MATCH,fa=FRIENDLY.active||{};
+  const myGoals=M.home===G.myId?M.hg:M.ag,oppGoals=M.home===G.myId?M.ag:M.hg;
+  let craque='';if(M.ratings){const ids=Object.keys(M.ratings);if(ids.length){const best=ids.reduce((a,b)=>M.ratings[a]>=M.ratings[b]?a:b);const bp=pById(+best);if(bp)craque=bp.nome+' ('+M.ratings[best].toFixed(1)+')';}}
+  const res=myGoals>oppGoals?'V':myGoals<oppGoals?'D':'E';
+  // histórico persistente
+  if(!Array.isArray(G.friendlyHistory))G.friendlyHistory=[];
+  G.friendlyHistory.push({ts:Date.now(),season:G.season,cid:fa.cid,leg:fa.role==='guest'?'ida':'volta',
+    myClub:G.teams[G.myId].nome,oppClub:fa.oppClub||'—',oppManager:fa.oppManager||'—',myGoals,oppGoals,res,craque});
+  if(G.friendlyHistory.length>100)G.friendlyHistory.splice(0,G.friendlyHistory.length-100);
+  // marca este confronto como já jogado por mim (bloqueia reuso do mesmo código)
+  if(!Array.isArray(G.friendlyPlayed))G.friendlyPlayed=[];
+  if(fa.cid&&!G.friendlyPlayed.includes(fa.cid))G.friendlyPlayed.push(fa.cid);
+  MATCH=null;friendlyCleanup();FRIENDLY.pending=null;
+  if(fa.role==='guest'){
+    // joguei a IDA → gero a CHAVE DE VOLTA para o autor do convite destravar a volta dele
+    const chave={type:'result',v:1,cid:fa.cid,host:{manager:G.manager.name,club:G.teams[G.myId].nome},
+      guestClub:fa.oppClub,myGoals,oppGoals,craque,from:teamSnapshot()};
+    FRIENDLY.lastResult=chave;FRIENDLY.lastMode='key';
+  }else{
+    // joguei a VOLTA → confronto ENCERRADO; guardo a comparação das duas mãos
+    const inc=FRIENDLY.incoming||{};
+    FRIENDLY.finalCompare={oppClub:fa.oppClub,oppManager:fa.oppManager,
+      ida:{theirGoals:inc.myGoals,myGoals:inc.oppGoals},    // na ida, ele (host da ida) fez inc.myGoals contra meu time (inc.oppGoals)
+      volta:{myGoals,oppGoals}};
+    FRIENDLY.lastResult=null;FRIENDLY.lastMode='closed';FRIENDLY.incoming=null;
+  }
+  autosave();go('amistoso');renderAmistoso();
+}
+let FRIENDLY={active:null,lastInvite:null,lastResult:null,pending:null,incoming:null,lastMode:null,finalCompare:null};
+function friendlyImport(){
+  const raw=(document.getElementById('friendlyIn')||{}).value||'';
+  const data=b64dec(raw);
+  if(!data)return toast('Código inválido. Confira se copiou tudo.');
+  const played=G.friendlyPlayed||[];
+  if(data.type==='invite'){
+    if(data.cid&&played.includes(data.cid))return toast('Você já jogou este confronto. Peça um convite novo para jogar de novo.');
+    friendlyGoPlay(data.from,{cid:data.cid,role:'guest'});
+  }else if(data.type==='result'){
+    // chave de volta: destrava a minha partida da volta
+    if(data.cid&&played.includes(data.cid))return toast('Este confronto já foi encerrado. Gere um novo convite para outra partida.');
+    FRIENDLY.incoming=data;FRIENDLY.lastMode='unlocked';FRIENDLY.finalCompare=null;
+    renderAmistoso();
+  }else toast('Código não reconhecido.');
+}
+function friendlyPlayReturn(){
+  const d=FRIENDLY.incoming;if(!d||!d.from)return toast('Sem chave de volta para jogar.');
+  friendlyGoPlay(d.from,{cid:d.cid,role:'host-return'});
+}
+function friendlyImportFile(file){
+  if(!file)return;const r=new FileReader();
+  r.onload=()=>{const inp=document.getElementById('friendlyIn');if(inp)inp.value=String(r.result||'').trim();friendlyImport();};
+  r.onerror=()=>toast('Falha ao ler arquivo.');r.readAsText(file);
+  const el=document.getElementById('friendlyFile');if(el)el.value='';
+}
+function friendlyDownload(code,kind){
+  try{const blob=new Blob([code],{type:'text/plain'});const url=URL.createObjectURL(blob),a=document.createElement('a');
+    a.href=url;a.download=`amistoso-${kind}-${(G.myId!=null?G.teams[G.myId].nome:'time').replace(/[^\w]+/g,'-')}.cfbfr.txt`;
+    document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);
+    toast('Arquivo do amistoso salvo — envie pelo WhatsApp.');
+  }catch(e){toast('Falha ao gerar arquivo.');}
+}
+function copyFriendly(code){
+  try{navigator.clipboard.writeText(code);toast('Código copiado! Cole no WhatsApp para o seu adversário.');}
+  catch(e){toast('Selecione e copie o código manualmente.');}
+}
+function renderAmistoso(){
+  const scr=document.getElementById('screen-amistoso');if(!scr)return;
+  const box=(title,code,kind)=>`<div class="card" style="border-color:var(--grass)">
+    <div class="eyebrow grass" style="margin-bottom:6px">${title}</div>
+    <textarea readonly style="width:100%;height:74px;background:rgba(10,16,28,.8);border:1px solid var(--line-hi);border-radius:10px;color:var(--muted);font-family:var(--mono);font-size:10px;padding:8px">${code}</textarea>
+    <div class="row" style="gap:8px;margin-top:8px">
+      <button class="btn" onclick="copyFriendly(\`${code}\`)">📋 Copiar</button>
+      <button class="btn ghost" onclick="friendlyDownload(\`${code}\`,'${kind}')">⤓ Salvar arquivo</button></div></div>`;
+  let top='';
+  if(FRIENDLY.lastMode==='key'&&FRIENDLY.lastResult){
+    // acabei de jogar a IDA → mostro a chave de volta para enviar
+    const r=FRIENDLY.lastResult,code=b64enc(r);
+    top=`<div class="card" style="border-color:var(--amber)">
+      <div class="section-title" style="font-size:18px">Ida disputada! 🤝</div>
+      <div style="font-weight:700;margin-top:4px">${G.teams[G.myId].nome} ${r.myGoals}–${r.oppGoals} ${r.guestClub}</div>
+      ${r.craque?`<div class="muted" style="font-size:12px;margin-top:2px">⭐ Craque: ${r.craque}</div>`:''}
+      <div class="muted" style="font-size:12px;margin-top:6px">Envie a <b class="amber">chave de volta</b> abaixo para o seu adversário. Ela destrava a partida da volta no jogo dele.</div></div>
+      ${box('🔑 Chave de volta — envie ao seu adversário',code,'chave')}`;
+  }else if(FRIENDLY.lastMode==='unlocked'&&FRIENDLY.incoming){
+    // recebi a chave de volta → volta destravada, posso jogar
+    const d=FRIENDLY.incoming;
+    top=`<div class="card" style="border-color:var(--grass)">
+      <div class="section-title grass" style="font-size:18px">🔓 Volta destravada!</div>
+      <div class="muted" style="font-size:13px;margin-top:2px"><b>${d.host.manager}</b> (${d.host.club}) já jogou a ida.</div>
+      <div style="font-weight:700;margin-top:4px">Ida: ${d.host.club} ${d.myGoals}–${d.oppGoals} ${d.guestClub}${d.craque?` · ⭐ ${d.craque}`:''}</div>
+      <button class="btn big grass" style="margin-top:10px;width:100%" onclick="friendlyPlayReturn()">▸ Escalar e jogar a volta contra o ${d.host.club}</button>
+      <div class="muted" style="font-size:11px;margin-top:6px">Depois de jogar, o confronto de ida e volta se encerra.</div></div>`;
+  }else if(FRIENDLY.lastMode==='closed'&&FRIENDLY.finalCompare){
+    // joguei a volta → confronto encerrado, comparação das duas mãos
+    const c=FRIENDLY.finalCompare;
+    const idaMine=c.ida.myGoals,idaTheirs=c.ida.theirGoals;       // ida: meu time (defesa) x time dele (ataque) — eu não joguei, meu time foi controlado por ele? não: na ida ELE jogou contra meu time
+    top=`<div class="card" style="border-color:var(--amber)">
+      <div class="section-title" style="font-size:18px">Confronto encerrado! 🏁</div>
+      <div class="muted" style="font-size:12px;margin-top:2px">Amistoso de ida e volta vs <b>${c.oppManager}</b> (${c.oppClub})</div>
+      <div style="margin-top:8px;font-size:14px">
+        <div>🔸 Ida (ele jogou): <b>${c.oppClub} ${c.ida.theirGoals}–${c.ida.myGoals} ${G.teams[G.myId].nome}</b></div>
+        <div>🔹 Volta (você jogou): <b>${G.teams[G.myId].nome} ${c.volta.myGoals}–${c.volta.oppGoals} ${c.oppClub}</b></div></div>
+      <div class="muted" style="font-size:11px;margin-top:8px">Para jogar de novo, gere um novo convite. O retrospecto fica no histórico abaixo.</div></div>`;
+  }
+  scr.innerHTML=`<div class="section-title" style="margin-bottom:6px">🤝 Amistoso</div>
+    <div class="muted" style="font-size:13px;margin-bottom:12px">Marque um amistoso de ida e volta com outro jogador! Um cria o convite; o outro joga a ida e devolve a <b>chave de volta</b>, que destrava a sua partida da volta. Não conta pontos — é pela rivalidade.</div>
+    ${top}
+    <div class="card">
+      <div class="eyebrow" style="margin-bottom:8px">1 · Escalar e criar convite (enviar meu time)</div>
+      <div class="muted" style="font-size:12px;margin-bottom:8px">O convite carrega a sua escalação atual. Ajuste o time antes, se quiser.</div>
+      <div class="row" style="gap:8px">
+        <button class="btn ghost" onclick="go('escala')">⚙ Escalar meu time</button>
+        <button class="btn grass" onclick="renderAmistosoInvite()">Gerar convite ▸</button></div>
+      <div id="inviteOut"></div></div>
+    <div class="card">
+      <div class="eyebrow" style="margin-bottom:8px">2 · Colar código recebido (convite ou chave de volta)</div>
+      <textarea id="friendlyIn" placeholder="Cole aqui o convite ou a chave de volta que recebeu…" style="width:100%;height:72px;background:rgba(10,16,28,.8);border:1px solid var(--line-hi);border-radius:10px;color:var(--text);font-family:var(--mono);font-size:11px;padding:8px"></textarea>
+      <div class="row" style="gap:8px;margin-top:8px">
+        <button class="btn" onclick="friendlyImport()">▸ Usar código</button>
+        <button class="btn ghost" onclick="document.getElementById('friendlyFile').click()">⤒ Abrir arquivo</button></div>
+      <input type="file" id="friendlyFile" accept=".txt,.cfbfr,text/plain" style="display:none" onchange="friendlyImportFile(this.files&&this.files[0])"></div>
+    ${friendlyHistoryHTML()}`;
+}
+function friendlyHistoryHTML(){
+  const h=(G.friendlyHistory||[]).slice().reverse();
+  if(!h.length)return `<div class="card"><div class="eyebrow" style="margin-bottom:6px">📜 Histórico de amistosos</div>
+    <div class="muted" style="font-size:12px">Nenhum amistoso disputado ainda. Desafie um amigo!</div></div>`;
+  const v=h.filter(x=>x.res==='V').length,e=h.filter(x=>x.res==='E').length,d=h.filter(x=>x.res==='D').length;
+  // retrospecto por adversário (técnico)
+  const byOpp={};
+  h.forEach(x=>{const k=x.oppManager+' ('+x.oppClub+')';if(!byOpp[k])byOpp[k]={v:0,e:0,d:0,gp:0,gc:0};
+    const o=byOpp[k];o[x.res.toLowerCase()]++;o.gp+=x.myGoals;o.gc+=x.oppGoals;});
+  const rivals=Object.entries(byOpp).map(([k,o])=>`<div class="prow" style="flex-wrap:wrap">
+    <span class="pname" style="flex:1 1 100%;font-weight:600;font-size:12px">${k}</span>
+    <span class="mono muted" style="font-size:11px">${o.v}V ${o.e}E ${o.d}D · gols ${o.gp}-${o.gc}</span></div>`).join('');
+  const rows=h.map(x=>{
+    const when=new Date(x.ts).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'});
+    const cls=x.res==='V'?'grass':x.res==='D'?'danger':'muted';
+    return `<div class="prow" style="flex-wrap:wrap">
+      <span class="fbadge ${x.res}">${x.res}</span>
+      <span class="pname" style="flex:1">${x.myClub} <span class="mono ${cls}" style="font-weight:700">${x.myGoals}×${x.oppGoals}</span> ${x.oppClub}</span>
+      <span class="muted" style="font-size:10px">${when}</span>
+      <span class="muted" style="flex:1 1 100%;font-size:10px">Técnico adversário: ${x.oppManager}${x.craque?` · ⭐ ${x.craque}`:''}</span></div>`;
+  }).join('');
+  return `<div class="card"><div class="row" style="justify-content:space-between;margin-bottom:8px">
+      <div class="eyebrow">📜 Histórico de amistosos</div>
+      <span class="mono" style="font-size:12px"><span class="grass">${v}V</span> ${e}E <span class="danger">${d}D</span></span></div>
+    <div class="eyebrow" style="margin:2px 0 6px;font-size:9px">Retrospecto por adversário</div>
+    <div class="plist" style="margin-bottom:10px">${rivals}</div>
+    <div class="eyebrow" style="margin:2px 0 6px;font-size:9px">Partidas</div>
+    <div class="scroll" style="max-height:300px"><div class="plist">${rows}</div></div></div>`;
+}
+function renderAmistosoInvite(){
+  const code=friendlyMakeInvite();if(!code)return;
+  const host=document.getElementById('inviteOut');if(!host)return;
+  host.innerHTML=`<div style="margin-top:10px"><div class="muted" style="font-size:12px;margin-bottom:6px">Convite gerado com o seu time atual (${G.teams[G.myId].nome}). Envie ao seu adversário:</div>
+    <textarea readonly style="width:100%;height:74px;background:rgba(10,16,28,.8);border:1px solid var(--line-hi);border-radius:10px;color:var(--muted);font-family:var(--mono);font-size:10px;padding:8px">${code}</textarea>
+    <div class="row" style="gap:8px;margin-top:8px">
+      <button class="btn" onclick="copyFriendly(\`${code}\`)">📋 Copiar código</button>
+      <button class="btn ghost" onclick="friendlyDownload(\`${code}\`,'convite')">⤓ Salvar arquivo</button></div></div>`;
+}
 function serializeGame(){return JSON.stringify({v:3,PID,G});}
 function snapMeta(auto){return {season:G.season,club:(G.myId!=null?G.teams[G.myId].nome:'Desempregado'),
   div:G.div,rep:Math.round(G.manager.reputation),ts:Date.now(),auto:!!auto};}
@@ -3257,6 +3533,8 @@ function migrateSave(g){
   if(!Array.isArray(g.worldQual))g.worldQual=[];
   if(g.mundial===undefined)g.mundial=null;
   if(!Array.isArray(g.mundialHistory))g.mundialHistory=[];
+  if(!Array.isArray(g.friendlyHistory))g.friendlyHistory=[];
+  if(!Array.isArray(g.friendlyPlayed))g.friendlyPlayed=[];
   // pipeline de talento: infere potencial para jogadores de saves antigos (evita deflação)
   if(Array.isArray(g.teams))g.teams.forEach(t=>{if(t&&Array.isArray(t.squad))t.squad.forEach(p=>{
     if(p&&p.pot==null)p.pot=Math.min(97,Math.max(p.ovr,p.ovr+(p.idade<=20?9:p.idade<=23?5:p.idade<=26?2:0)));});});
