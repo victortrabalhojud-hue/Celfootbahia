@@ -747,7 +747,7 @@ function startGame(teamId){
     manager:{name:coach,reputation:clamp(my.prestige-8,22,82)},
     season:1,round:0,leagues:null,offers:[],history:[],finished:false,viewDiv:my.div,
     lineup:autoLineup(my,"4-3-3"),lastPos:null,lastPrize:0,lastChamp:false,champions:[],
-    cup:null,leaguePodium:[],lastLeagueEarn:0,transferOffers:[],lastWages:0,legends:[],morale:60,lastTV:0,lastGate:0,careerLog:[],seasonGate:0,seasonReview:null,buyOffers:[],lastEmployedDiv:null,repResetOnHire:false,justFired:false,seasonAlbum:[],worldQual:[],mundial:null,mundialHistory:[],friendlyHistory:[],friendlyPlayed:[]};
+    cup:null,leaguePodium:[],lastLeagueEarn:0,transferOffers:[],lastWages:0,legends:[],morale:60,lastTV:0,lastGate:0,careerLog:[],seasonGate:0,seasonReview:null,buyOffers:[],lastEmployedDiv:null,repResetOnHire:false,justFired:false,seasonAlbum:[],worldQual:[],mundial:null,mundialHistory:[],friendlyHistory:[],friendlyPlayed:[],friendlySumula:null};
   G.didim=budgets[teamId];
   logCareer('job',`${coach} assume o ${my.nome} (${DIV_NAMES[my.div]}) — início da carreira`);
   buildLeagues();buildCup();
@@ -3370,9 +3370,11 @@ function afterFriendlyLive(){
       ida:{theirGoals:inc.myGoals,myGoals:inc.oppGoals},    // na ida, ele (host da ida) fez inc.myGoals contra meu time (inc.oppGoals)
       volta:{myGoals,oppGoals}};
     FRIENDLY.lastResult=null;FRIENDLY.lastMode='closed';FRIENDLY.incoming=null;
-    // súmula final (opcional): permite que o adversário registre a volta no histórico dele
+    // súmula final (opcional): fica SALVA no jogo, para poder ser enviada a qualquer momento
     FRIENDLY.finalCode=b64enc({type:'final',v:1,cid:fa.cid,
       host:{manager:G.manager.name,club:G.teams[G.myId].nome},myGoals,oppGoals,craque});
+    G.friendlySumula={cid:fa.cid,code:FRIENDLY.finalCode,oppManager:fa.oppManager||'—',oppClub:fa.oppClub||'—',
+      myGoals,oppGoals,ts:Date.now()};
   }
   autosave();go('amistoso');renderAmistoso();
 }
@@ -3488,14 +3490,7 @@ function renderAmistoso(){
       <div style="margin-top:8px;font-size:14px">
         <div>🔸 Ida (ele jogou): <b>${c.oppClub} ${c.ida.theirGoals}–${c.ida.myGoals} ${G.teams[G.myId].nome}</b></div>
         <div>🔹 Volta (você jogou): <b>${G.teams[G.myId].nome} ${c.volta.myGoals}–${c.volta.oppGoals} ${c.oppClub}</b></div></div>
-      <div class="muted" style="font-size:11px;margin-top:8px">Para jogar de novo, gere um novo convite. O retrospecto fica no histórico abaixo.</div></div>
-      ${FRIENDLY.finalCode?`<div class="card"><div class="eyebrow" style="margin-bottom:6px">📄 Súmula final (opcional)</div>
-        <div class="muted" style="font-size:12px;margin-bottom:8px">Envie para <b>${c.oppManager}</b> se quiser que a volta também apareça no histórico dele. Se não enviar, nada quebra — é só um registro.</div>
-        <textarea readonly style="width:100%;height:60px;background:rgba(10,16,28,.8);border:1px solid var(--line-hi);border-radius:10px;color:var(--muted);font-family:var(--mono);font-size:10px;padding:8px">${FRIENDLY.finalCode}</textarea>
-        <div class="row" style="gap:8px;margin-top:8px">
-          <button class="btn" onclick="copyFriendly(\`${FRIENDLY.finalCode}\`)">📋 Copiar</button>
-          <button class="btn ghost" onclick="friendlyDownload(\`${FRIENDLY.finalCode}\`,'sumula')">⤓ Salvar arquivo</button>
-          <button class="btn ghost" onclick="FRIENDLY.finalCode=null;renderAmistoso()">🧹 Limpar</button></div></div>`:''}`;
+      <div class="muted" style="font-size:11px;margin-top:8px">Para jogar de novo, gere um novo convite. O retrospecto fica no histórico abaixo.</div></div>`;
   }else if(FRIENDLY.lastMode==='closedRecv'&&FRIENDLY.finalSummary){
     // recebi a súmula: a volta que ele jogou entrou no meu histórico
     const s=FRIENDLY.finalSummary;
@@ -3514,6 +3509,7 @@ function renderAmistoso(){
         <b class="amber">2️⃣ CHAVE DE VOLTA</b> — <b>ele</b> gera no fim do jogo dele e te envia. Você cola aqui, destrava e joga a <b>volta</b>.<br>
         <span class="muted">3️⃣ SÚMULA (opcional)</span> — quem joga a volta pode enviar de volta, só para que as duas partidas apareçam no histórico dos dois.</div></div>
     ${top}
+    ${friendlySumulaCard()}
     <div class="card">
       <div class="eyebrow" style="margin-bottom:8px">1 · Escalar e criar convite (enviar meu time)</div>
       <div class="muted" style="font-size:12px;margin-bottom:8px">O convite carrega a sua escalação atual. Ajuste o time antes, se quiser.</div>
@@ -3522,8 +3518,8 @@ function renderAmistoso(){
         <button class="btn grass" onclick="renderAmistosoInvite()">Gerar convite ▸</button></div>
       <div id="inviteOut"></div></div>
     <div class="card">
-      <div class="eyebrow" style="margin-bottom:8px">2 · Colar código recebido (convite ou chave de volta)</div>
-      <textarea id="friendlyIn" placeholder="Cole aqui o convite ou a chave de volta que recebeu…" style="width:100%;height:72px;background:rgba(10,16,28,.8);border:1px solid var(--line-hi);border-radius:10px;color:var(--text);font-family:var(--mono);font-size:11px;padding:8px"></textarea>
+      <div class="eyebrow" style="margin-bottom:8px">2 · Colar código recebido (convite, chave de volta ou súmula)</div>
+      <textarea id="friendlyIn" placeholder="Cole aqui o convite, a chave de volta ou a súmula que recebeu…" style="width:100%;height:72px;background:rgba(10,16,28,.8);border:1px solid var(--line-hi);border-radius:10px;color:var(--text);font-family:var(--mono);font-size:11px;padding:8px"></textarea>
       <div class="row" style="gap:8px;margin-top:8px">
         <button class="btn" onclick="friendlyImport()">▸ Usar código</button>
         <button class="btn ghost" onclick="document.getElementById('friendlyFile').click()">⤒ Abrir arquivo</button>
@@ -3566,6 +3562,39 @@ function friendlyHistoryHTML(){
     <button class="btn ghost" style="margin-top:10px;width:100%;${FRIENDLY.confirmReset?'border-color:var(--danger);color:var(--danger)':''}" onclick="friendlyResetHistory()">
       ${FRIENDLY.confirmReset?'⚠ Confirmar: apagar todo o histórico?':'🗑 Zerar histórico de amistosos'}</button></div>`;
 }
+function friendlySumulaCard(){
+  const s=G.friendlySumula;
+  if(s&&s.code){
+    return `<div class="card" style="border-color:var(--grass)">
+      <div class="eyebrow grass" style="margin-bottom:6px">📄 Súmula final (opcional)</div>
+      <div class="muted" style="font-size:12px;margin-bottom:8px">Do confronto vs <b>${s.oppManager}</b> (${s.oppClub}) — volta ${s.myGoals}×${s.oppGoals}.
+        Envie para ele registrar essa partida no histórico dele. Se não enviar, nada quebra.</div>
+      <textarea readonly style="width:100%;height:60px;background:rgba(10,16,28,.8);border:1px solid var(--line-hi);border-radius:10px;color:var(--muted);font-family:var(--mono);font-size:10px;padding:8px">${s.code}</textarea>
+      <div class="row" style="gap:8px;margin-top:8px">
+        <button class="btn" onclick="copyFriendly(\`${s.code}\`)">📋 Copiar</button>
+        <button class="btn ghost" onclick="friendlyDownload(\`${s.code}\`,'sumula')">⤓ Salvar arquivo</button>
+        <button class="btn ghost" onclick="friendlyDropSumula()">🧹 Limpar</button></div></div>`;
+  }
+  // sem súmula guardada: se eu já joguei alguma VOLTA, posso gerar a súmula dela
+  const last=(G.friendlyHistory||[]).slice().reverse().find(x=>x.leg==='volta'&&!x.byOpp);
+  if(last){
+    return `<div class="card">
+      <div class="eyebrow" style="margin-bottom:6px">📄 Súmula final (opcional)</div>
+      <div class="muted" style="font-size:12px;margin-bottom:8px">Você jogou a volta contra <b>${last.oppManager}</b> (${last.oppClub}). Gere a súmula para que essa partida entre no histórico dele também.</div>
+      <button class="btn" style="width:100%" onclick="friendlyRebuildSumula()">📄 Gerar súmula do último confronto</button></div>`;
+  }
+  return '';
+}
+function friendlyDropSumula(){G.friendlySumula=null;FRIENDLY.finalCode=null;autosave();renderAmistoso();}
+function friendlyRebuildSumula(){
+  const last=(G.friendlyHistory||[]).slice().reverse().find(x=>x.leg==='volta'&&!x.byOpp);
+  if(!last)return toast('Você ainda não jogou nenhuma partida de volta.');
+  const code=b64enc({type:'final',v:1,cid:last.cid,host:{manager:G.manager.name,club:last.myClub},
+    myGoals:last.myGoals,oppGoals:last.oppGoals,craque:last.craque||''});
+  G.friendlySumula={cid:last.cid,code,oppManager:last.oppManager,oppClub:last.oppClub,
+    myGoals:last.myGoals,oppGoals:last.oppGoals,ts:Date.now()};
+  autosave();renderAmistoso();toast('Súmula gerada — envie ao seu adversário.');
+}
 function renderAmistosoInvite(){
   const code=friendlyMakeInvite();if(!code)return;
   const host=document.getElementById('inviteOut');if(!host)return;
@@ -3585,7 +3614,7 @@ function friendlyClearInput(){
 function friendlyResetHistory(){
   if(!FRIENDLY.confirmReset){FRIENDLY.confirmReset=true;renderAmistoso();return;}
   FRIENDLY.confirmReset=false;
-  G.friendlyHistory=[];G.friendlyPlayed=[];
+  G.friendlyHistory=[];G.friendlyPlayed=[];G.friendlySumula=null;
   FRIENDLY.incoming=null;FRIENDLY.lastMode=null;FRIENDLY.finalCompare=null;FRIENDLY.lastResult=null;FRIENDLY.pending=null;
   autosave();renderAmistoso();toast('Histórico de amistosos zerado.');
 }
@@ -3623,6 +3652,7 @@ function migrateSave(g){
   if(!Array.isArray(g.mundialHistory))g.mundialHistory=[];
   if(!Array.isArray(g.friendlyHistory))g.friendlyHistory=[];
   if(!Array.isArray(g.friendlyPlayed))g.friendlyPlayed=[];
+  if(g.friendlySumula===undefined)g.friendlySumula=null;
   // pipeline de talento: infere potencial para jogadores de saves antigos (evita deflação)
   if(Array.isArray(g.teams))g.teams.forEach(t=>{if(t&&Array.isArray(t.squad))t.squad.forEach(p=>{
     if(p&&p.pot==null)p.pot=Math.min(97,Math.max(p.ovr,p.ovr+(p.idade<=20?9:p.idade<=23?5:p.idade<=26?2:0)));});});
