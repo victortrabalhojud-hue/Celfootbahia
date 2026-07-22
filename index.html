@@ -3369,18 +3369,35 @@ function afterFriendlyLive(){
   autosave();go('amistoso');renderAmistoso();
 }
 let FRIENDLY={active:null,lastInvite:null,lastResult:null,pending:null,incoming:null,lastMode:null,finalCompare:null};
+function friendlyRecordIda(d){
+  // registra no MEU histórico a partida de ida que o adversário jogou (dado que vem na chave de volta)
+  if(!d||!d.host)return;
+  if(!Array.isArray(G.friendlyHistory))G.friendlyHistory=[];
+  if(G.friendlyHistory.some(x=>x.cid===d.cid&&x.leg==='ida'))return;      // evita duplicar
+  const myGoals=d.oppGoals,oppGoals=d.myGoals;                            // na ida, meu time é o visitante
+  const res=myGoals>oppGoals?'V':myGoals<oppGoals?'D':'E';
+  G.friendlyHistory.push({ts:Date.now(),season:G.season,cid:d.cid,leg:'ida',byOpp:true,
+    myClub:(G.myId!=null?G.teams[G.myId].nome:'—'),oppClub:d.host.club||'—',oppManager:d.host.manager||'—',
+    myGoals,oppGoals,res,craque:''});
+  if(G.friendlyHistory.length>100)G.friendlyHistory.splice(0,G.friendlyHistory.length-100);
+  autosave();
+}
 function friendlyImport(){
   const raw=(document.getElementById('friendlyIn')||{}).value||'';
   const data=b64dec(raw);
   if(!data)return toast('Código inválido. Confira se copiou tudo.');
   const played=G.friendlyPlayed||[];
   if(data.type==='invite'){
+    const meuClube=G.myId!=null?G.teams[G.myId].nome:'';
+    if(data.from&&data.from.manager===G.manager.name&&data.from.club&&data.from.club.nome===meuClube)
+      return toast('Este é o SEU convite — envie para o seu adversário colar no jogo dele.');
     if(data.cid&&played.includes(data.cid))return toast('Você já jogou este confronto. Peça um convite novo para jogar de novo.');
     friendlyGoPlay(data.from,{cid:data.cid,role:'guest'});
   }else if(data.type==='result'){
     // chave de volta: destrava a minha partida da volta
     if(data.cid&&played.includes(data.cid))return toast('Este confronto já foi encerrado. Gere um novo convite para outra partida.');
     FRIENDLY.incoming=data;FRIENDLY.lastMode='unlocked';FRIENDLY.finalCompare=null;
+    friendlyRecordIda(data);                    // a ida já entra no histórico, mesmo antes de eu jogar a volta
     renderAmistoso();
   }else toast('Código não reconhecido.');
 }
@@ -3445,7 +3462,13 @@ function renderAmistoso(){
       <div class="muted" style="font-size:11px;margin-top:8px">Para jogar de novo, gere um novo convite. O retrospecto fica no histórico abaixo.</div></div>`;
   }
   scr.innerHTML=`<div class="section-title" style="margin-bottom:6px">🤝 Amistoso</div>
-    <div class="muted" style="font-size:13px;margin-bottom:12px">Marque um amistoso de ida e volta com outro jogador! Um cria o convite; o outro joga a ida e devolve a <b>chave de volta</b>, que destrava a sua partida da volta. Não conta pontos — é pela rivalidade.</div>
+    <div class="muted" style="font-size:13px;margin-bottom:10px">Amistoso de ida e volta com outro jogador. Não conta pontos — é pela rivalidade.</div>
+    <div class="card" style="border-left:3px solid var(--amber)">
+      <div class="eyebrow amber" style="margin-bottom:6px">Como funciona (2 códigos no total)</div>
+      <div class="muted" style="font-size:12px;line-height:1.7">
+        <b class="grass">1️⃣ CONVITE</b> — <b>você</b> gera e envia. Ele cola no jogo dele e joga a <b>ida</b>.<br>
+        <b class="amber">2️⃣ CHAVE DE VOLTA</b> — <b>ele</b> gera no fim do jogo dele e te envia. Você cola aqui, destrava e joga a <b>volta</b>.<br>
+        Acabou a volta: confronto encerrado. Para jogar de novo, gere um convite novo.</div></div>
     ${top}
     <div class="card">
       <div class="eyebrow" style="margin-bottom:8px">1 · Escalar e criar convite (enviar meu time)</div>
@@ -3459,14 +3482,17 @@ function renderAmistoso(){
       <textarea id="friendlyIn" placeholder="Cole aqui o convite ou a chave de volta que recebeu…" style="width:100%;height:72px;background:rgba(10,16,28,.8);border:1px solid var(--line-hi);border-radius:10px;color:var(--text);font-family:var(--mono);font-size:11px;padding:8px"></textarea>
       <div class="row" style="gap:8px;margin-top:8px">
         <button class="btn" onclick="friendlyImport()">▸ Usar código</button>
-        <button class="btn ghost" onclick="document.getElementById('friendlyFile').click()">⤒ Abrir arquivo</button></div>
+        <button class="btn ghost" onclick="document.getElementById('friendlyFile').click()">⤒ Abrir arquivo</button>
+        <button class="btn ghost" onclick="friendlyClearInput()">🧹 Limpar</button></div>
       <input type="file" id="friendlyFile" accept=".txt,.cfbfr,text/plain" style="display:none" onchange="friendlyImportFile(this.files&&this.files[0])"></div>
     ${friendlyHistoryHTML()}`;
 }
 function friendlyHistoryHTML(){
   const h=(G.friendlyHistory||[]).slice().reverse();
   if(!h.length)return `<div class="card"><div class="eyebrow" style="margin-bottom:6px">📜 Histórico de amistosos</div>
-    <div class="muted" style="font-size:12px">Nenhum amistoso disputado ainda. Desafie um amigo!</div></div>`;
+    <div class="muted" style="font-size:12px">Nenhum amistoso disputado ainda. Desafie um amigo!</div>
+    ${(G.friendlyPlayed||[]).length?`<button class="btn ghost" style="margin-top:10px;width:100%;${FRIENDLY.confirmReset?'border-color:var(--danger);color:var(--danger)':''}" onclick="friendlyResetHistory()">
+      ${FRIENDLY.confirmReset?'⚠ Confirmar: liberar confrontos antigos?':'🗑 Liberar confrontos antigos'}</button>`:''}</div>`;
   const v=h.filter(x=>x.res==='V').length,e=h.filter(x=>x.res==='E').length,d=h.filter(x=>x.res==='D').length;
   // retrospecto por adversário (técnico)
   const byOpp={};
@@ -3478,11 +3504,13 @@ function friendlyHistoryHTML(){
   const rows=h.map(x=>{
     const when=new Date(x.ts).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'});
     const cls=x.res==='V'?'grass':x.res==='D'?'danger':'muted';
+    const legTag=x.leg?`<span class="mono muted" style="font-size:9px">${x.leg.toUpperCase()}${x.byOpp?' · ele jogou':''}</span>`:'';
     return `<div class="prow" style="flex-wrap:wrap">
       <span class="fbadge ${x.res}">${x.res}</span>
       <span class="pname" style="flex:1">${x.myClub} <span class="mono ${cls}" style="font-weight:700">${x.myGoals}×${x.oppGoals}</span> ${x.oppClub}</span>
       <span class="muted" style="font-size:10px">${when}</span>
-      <span class="muted" style="flex:1 1 100%;font-size:10px">Técnico adversário: ${x.oppManager}${x.craque?` · ⭐ ${x.craque}`:''}</span></div>`;
+      <span style="flex:1 1 100%;display:flex;gap:8px;align-items:center">${legTag}
+        <span class="muted" style="font-size:10px">Técnico adversário: ${x.oppManager}${x.craque?` · ⭐ ${x.craque}`:''}</span></span></div>`;
   }).join('');
   return `<div class="card"><div class="row" style="justify-content:space-between;margin-bottom:8px">
       <div class="eyebrow">📜 Histórico de amistosos</div>
@@ -3490,7 +3518,9 @@ function friendlyHistoryHTML(){
     <div class="eyebrow" style="margin:2px 0 6px;font-size:9px">Retrospecto por adversário</div>
     <div class="plist" style="margin-bottom:10px">${rivals}</div>
     <div class="eyebrow" style="margin:2px 0 6px;font-size:9px">Partidas</div>
-    <div class="scroll" style="max-height:300px"><div class="plist">${rows}</div></div></div>`;
+    <div class="scroll" style="max-height:300px"><div class="plist">${rows}</div></div>
+    <button class="btn ghost" style="margin-top:10px;width:100%;${FRIENDLY.confirmReset?'border-color:var(--danger);color:var(--danger)':''}" onclick="friendlyResetHistory()">
+      ${FRIENDLY.confirmReset?'⚠ Confirmar: apagar todo o histórico?':'🗑 Zerar histórico de amistosos'}</button></div>`;
 }
 function renderAmistosoInvite(){
   const code=friendlyMakeInvite();if(!code)return;
@@ -3499,7 +3529,21 @@ function renderAmistosoInvite(){
     <textarea readonly style="width:100%;height:74px;background:rgba(10,16,28,.8);border:1px solid var(--line-hi);border-radius:10px;color:var(--muted);font-family:var(--mono);font-size:10px;padding:8px">${code}</textarea>
     <div class="row" style="gap:8px;margin-top:8px">
       <button class="btn" onclick="copyFriendly(\`${code}\`)">📋 Copiar código</button>
-      <button class="btn ghost" onclick="friendlyDownload(\`${code}\`,'convite')">⤓ Salvar arquivo</button></div></div>`;
+      <button class="btn ghost" onclick="friendlyDownload(\`${code}\`,'convite')">⤓ Salvar arquivo</button>
+      <button class="btn ghost" onclick="friendlyClearInvite()">🧹 Limpar</button></div></div>`;
+}
+function friendlyClearInvite(){const h=document.getElementById('inviteOut');if(h)h.innerHTML='';}
+function friendlyClearInput(){
+  const i=document.getElementById('friendlyIn');if(i)i.value='';
+  FRIENDLY.incoming=null;FRIENDLY.lastMode=null;FRIENDLY.finalCompare=null;FRIENDLY.lastResult=null;FRIENDLY.pending=null;
+  renderAmistoso();toast('Campo limpo.');
+}
+function friendlyResetHistory(){
+  if(!FRIENDLY.confirmReset){FRIENDLY.confirmReset=true;renderAmistoso();return;}
+  FRIENDLY.confirmReset=false;
+  G.friendlyHistory=[];G.friendlyPlayed=[];
+  FRIENDLY.incoming=null;FRIENDLY.lastMode=null;FRIENDLY.finalCompare=null;FRIENDLY.lastResult=null;FRIENDLY.pending=null;
+  autosave();renderAmistoso();toast('Histórico de amistosos zerado.');
 }
 function serializeGame(){return JSON.stringify({v:3,PID,G});}
 function snapMeta(auto){return {season:G.season,club:(G.myId!=null?G.teams[G.myId].nome:'Desempregado'),
